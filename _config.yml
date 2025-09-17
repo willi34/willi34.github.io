@@ -5,9 +5,6 @@ theme: minima
 plugins:
   - jekyll-feed
 
-collections:
-  HTB Challenges:
-    output: true
-    permalink: /htb-challenges/:title/
+excerpt_separator: "<!--excerpt-->"
 
   
