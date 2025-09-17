@@ -1,0 +1,6 @@
+title: My Jekyll Blog
+author: Your Name
+description: A simple blog using Jekyll and GitHub Pages
+theme: minima
+plugins:
+  - jekyll-feed
