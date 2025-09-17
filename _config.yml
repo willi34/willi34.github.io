@@ -1,6 +1,6 @@
-title: My Jekyll Blog
-author: Your Name
-description: A simple blog using Jekyll and GitHub Pages
+title: CTF writeups
+author: willi34
+description: A simple blog documenting CTF challenges
 theme: minima
 plugins:
   - jekyll-feed
