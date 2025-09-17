@@ -1,7 +1,7 @@
 ---
 layout: my-writeup
-title: Example sort by category page
-permalink: /my-blog/
+title: Writeups
+permalink: /writeups/
 category: 'HTB Challenges'
 tags: ['Web', 'Misc', 'Coding']
 ---
