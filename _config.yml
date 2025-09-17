@@ -4,3 +4,10 @@ description: A simple blog documenting CTF challenges
 theme: minima
 plugins:
   - jekyll-feed
+
+collections:
+  HTB Challenges:
+    output: true
+    permalink: /htb-challenges/:title/
+
+  
