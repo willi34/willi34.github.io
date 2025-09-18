@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF Challenges - CyberSec Chronicles</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/ctfs.css">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Page Header -->
+            <section class="page-header">
+                <h1>CTF Challenges</h1>
+                <p>Explore detailed writeups for solved and unsolved challenges pulled from various Capture The Flag competitions. Each writeup includes step-by-step solutions, tools used, and lessons learned.</p>
+            </section>
+
+            <!-- Filter Section -->
+            <section class="filter-section">
+                <div class="filter-controls">
+                    <button class="filter-btn active" data-filter="all">All CTFs</button>
+                    <button class="filter-btn" data-filter="web">Web</button>
+                    <button class="filter-btn" data-filter="crypto">Crypto</button>
+                    <button class="filter-btn" data-filter="pwn">Pwn</button>
+                    <button class="filter-btn" data-filter="rev">Reverse</button>
+                    <button class="filter-btn" data-filter="forensics">Forensics</button>
+                    <button class="filter-btn" data-filter="misc">Misc</button>
+                </div>
+            </section>
+
+            <!-- CTF Grid -->
+            <section class="ctfs-grid-section">
+                <div class="ctfs-grid">
+                    <!-- CTF Card with Logo -->
+                    <div class="ctf-card" data-category="web crypto">
+                        <div class="ctf-logo-container">
+                            <img src="https://via.placeholder.com/80x80/ff6b1a/ffffff?text=HTB" alt="HackTheBox Logo" class="ctf-logo">
+                        </div>
+                        <h3>HackTheBox University CTF 2024</h3>
+                        <p>Annual university competition featuring advanced web exploitation and cryptography challenges.</p>
+                        <div class="ctf-meta">
+                            <span class="ctf-date">Dec 2024</span>
+                            <span class="ctf-difficulty">Hard</span>
+                            <span class="ctf-challenges">12 challenges</span>
+                        </div>
+                        <div class="ctf-tags">
+                            <span class="tag">Web</span>
+                            <span class="tag">Crypto</span>
+                            <span class="tag">Pwn</span>
+                        </div>
+                    </div>
+
+                    <!-- CTF Card with Emoji Fallback -->
+                    <div class="ctf-card" data-category="pwn rev">
+                        <div class="ctf-logo-container">
+                            <div class="ctf-emoji">🏴‍☠️</div>
+                        </div>
+                        <h3>PicoCTF 2024</h3>
+                        <p>Beginner-friendly competition perfect for learning binary exploitation and reverse engineering fundamentals.</p>
+                        <div class="ctf-meta">
+                            <span class="ctf-date">Nov 2024</span>
+                            <span class="ctf-difficulty">Medium</span>
+                            <span class="ctf-challenges">8 challenges</span>
+                        </div>
+                        <div class="ctf-tags">
+                            <span class="tag">Pwn</span>
+                            <span class="tag">Reverse</span>
+                        </div>
+                    </div>
+
+                    <!-- CTF Card with Logo -->
+                    <div class="ctf-card" data-category="forensics misc">
+                        <div class="ctf-logo-container">
+                            <img src="https://via.placeholder.com/80x80/ff8c42/000000?text=DEF" alt="DEF CON Logo" class="ctf-logo">
+                        </div>
+                        <h3>DEF CON 32 CTF Finals</h3>
+                        <p>The most prestigious hacking competition in the world, featuring cutting-edge challenges across all categories.</p>
+                        <div class="ctf-meta">
+                            <span class="ctf-date">Aug 2024</span>
+                            <span class="ctf-difficulty">Expert</span>
+                            <span class="ctf-challenges">15 challenges</span>
+                        </div>
+                        <div class="ctf-tags">
+                            <span class="tag">Forensics</span>
+                            <span class="tag">Misc</span>
+                            <span class="tag">Web</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer will be loaded here -->
+    <div id="footer-placeholder"></div>
+
+    <script src="/js/script.js"></script>
+    <script src="/js/ctfs.js"></script>
+</body>
+</html>

@@ -1,0 +1,357 @@
+/* CTF Page Specific Styles */
+
+/* Page Header */
+.page-header {
+    text-align: center;
+    padding: 3rem 0;
+    background: linear-gradient(45deg, rgba(255, 107, 26, 0.1) 0%, rgba(255, 140, 66, 0.05) 100%);
+    border-radius: 15px;
+    margin: 2rem 0;
+    border: 1px solid rgba(255, 107, 26, 0.3);
+}
+
+.page-header h1 {
+    font-size: 3rem;
+    color: #ff6b1a;
+    margin-bottom: 1rem;
+    text-shadow: 0 0 15px rgba(255, 107, 26, 0.4);
+}
+
+.page-header p {
+    font-size: 1.2rem;
+    color: #ff8c42;
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+/* Filter Section */
+.filter-section {
+    margin: 2rem 0;
+    padding: 1.5rem 0;
+    text-align: center;
+}
+
+.filter-controls {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.filter-btn {
+    background: rgba(30, 30, 30, 0.8);
+    color: #ff8c42;
+    border: 2px solid rgba(255, 107, 26, 0.3);
+    padding: 0.8rem 1.5rem;
+    border-radius: 25px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 500;
+    font-size: 0.9rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.filter-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 107, 26, 0.1), transparent);
+    transition: left 0.4s ease;
+}
+
+.filter-btn:hover::before {
+    left: 100%;
+}
+
+.filter-btn:hover {
+    color: #ff6b1a;
+    border-color: #ff6b1a;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(255, 107, 26, 0.2);
+}
+
+.filter-btn.active {
+    background: linear-gradient(45deg, #ff6b1a, #ff8c42);
+    color: #000;
+    border-color: #ff6b1a;
+    font-weight: bold;
+    box-shadow: 0 0 20px rgba(255, 107, 26, 0.4);
+}
+
+.filter-btn.active:hover {
+    transform: translateY(-2px) scale(1.05);
+}
+
+/* CTF Grid */
+.ctfs-grid-section {
+    padding: 2rem 0;
+}
+
+.ctfs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 2rem;
+    margin-top: 2rem;
+}
+
+.ctf-card {
+    background: linear-gradient(135deg, rgba(30, 30, 30, 0.9) 0%, rgba(40, 40, 40, 0.7) 100%);
+    padding: 2rem;
+    border-radius: 15px;
+    border: 2px solid rgba(255, 107, 26, 0.3);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    opacity: 1;
+    transform: scale(1);
+}
+
+.ctf-card.hidden {
+    opacity: 0;
+    transform: scale(0.8);
+    pointer-events: none;
+    transition: all 0.3s ease;
+}
+
+.ctf-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 107, 26, 0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.ctf-card:hover::before {
+    left: 100%;
+}
+
+.ctf-card:hover {
+    border-color: #ff6b1a;
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 15px 40px rgba(255, 107, 26, 0.3);
+}
+
+/* CTF Logo Container */
+.ctf-logo-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    height: 100px;
+}
+
+.ctf-logo {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #ff6b1a;
+    box-shadow: 0 0 20px rgba(255, 107, 26, 0.4);
+    transition: all 0.3s ease;
+    background: rgba(255, 107, 26, 0.1);
+}
+
+.ctf-logo:hover {
+    transform: scale(1.1) rotate(5deg);
+    box-shadow: 0 0 30px rgba(255, 107, 26, 0.6);
+}
+
+.ctf-emoji {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(45deg, #ff6b1a, #ff8c42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    color: #000;
+    box-shadow: 0 0 20px rgba(255, 107, 26, 0.4);
+    transition: all 0.3s ease;
+}
+
+.ctf-emoji:hover {
+    transform: scale(1.1) rotate(-5deg);
+    box-shadow: 0 0 30px rgba(255, 107, 26, 0.6);
+}
+
+/* CTF Card Content */
+.ctf-card h3 {
+    color: #ff6b1a;
+    font-size: 1.4rem;
+    margin-bottom: 1rem;
+    text-align: center;
+    font-weight: bold;
+}
+
+.ctf-card p {
+    color: #ff8c42;
+    margin-bottom: 1.5rem;
+    line-height: 1.6;
+    text-align: center;
+    font-size: 0.95rem;
+}
+
+/* CTF Meta Information */
+.ctf-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    padding: 0.8rem;
+    background: rgba(20, 20, 20, 0.5);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 107, 26, 0.2);
+}
+
+.ctf-date {
+    color: #ff8c42;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.ctf-difficulty {
+    padding: 0.3rem 0.8rem;
+    border-radius: 15px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.ctf-difficulty:contains("Easy") {
+    background: rgba(46, 160, 67, 0.2);
+    color: #4CAF50;
+    border: 1px solid #4CAF50;
+}
+
+.ctf-card .ctf-difficulty {
+    background: rgba(255, 107, 26, 0.2);
+    color: #ff6b1a;
+    border: 1px solid #ff6b1a;
+}
+
+.ctf-challenges {
+    color: #ff6b1a;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+/* CTF Tags */
+.ctf-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.tag {
+    background: rgba(255, 107, 26, 0.2);
+    color: #ff6b1a;
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid rgba(255, 107, 26, 0.4);
+    transition: all 0.3s ease;
+}
+
+.tag:hover {
+    background: rgba(255, 107, 26, 0.3);
+    transform: scale(1.05);
+}
+
+/* Filter Animation */
+.ctf-card.filtering {
+    transition: all 0.5s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* Loading Animation */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.ctf-card {
+    animation: slideInUp 0.6s ease-out;
+    animation-fill-mode: both;
+}
+
+.ctf-card:nth-child(1) { animation-delay: 0.1s; }
+.ctf-card:nth-child(2) { animation-delay: 0.2s; }
+.ctf-card:nth-child(3) { animation-delay: 0.3s; }
+.ctf-card:nth-child(4) { animation-delay: 0.4s; }
+.ctf-card:nth-child(5) { animation-delay: 0.5s; }
+.ctf-card:nth-child(6) { animation-delay: 0.6s; }
+.ctf-card:nth-child(7) { animation-delay: 0.7s; }
+.ctf-card:nth-child(8) { animation-delay: 0.8s; }
+.ctf-card:nth-child(9) { animation-delay: 0.9s; }
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .page-header h1 {
+        font-size: 2.5rem;
+    }
+    
+    .page-header p {
+        font-size: 1rem;
+        padding: 0 1rem;
+    }
+    
+    .filter-controls {
+        gap: 0.5rem;
+    }
+    
+    .filter-btn {
+        padding: 0.6rem 1rem;
+        font-size: 0.8rem;
+    }
+    
+    .ctfs-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+    
+    .ctf-meta {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+    }
+    
+    .ctf-tags {
+        justify-content: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .ctf-card {
+        padding: 1.5rem;
+    }
+    
+    .ctf-logo, .ctf-emoji {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .ctf-emoji {
+        font-size: 2rem;
+    }
+    
+    .ctf-card h3 {
+        font-size: 1.2rem;
+    }
+}
