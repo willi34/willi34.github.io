@@ -1,4 +1,4 @@
-// CTF Page Specific JavaScript
+// CTF Page Specific JavaScript - Fixed Filter Bug
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeCTFPage();
@@ -14,7 +14,6 @@ function initializeCTFPage() {
     }, 200);
 }
 
-// Filter functionality
 function setupFilterFunctionality() {
     const filterButtons = document.querySelectorAll('.filter-btn');
     const ctfCards = document.querySelectorAll('.ctf-card');
@@ -33,9 +32,11 @@ function setupFilterFunctionality() {
     });
 }
 
+// Filter function extracting the category from the cards
 function filterCTFCards(cards, filter) {
     cards.forEach((card, index) => {
-        const categories = card.getAttribute('data-category');
+        // Get the category string and check if it includes the filter
+        const categories = card.getAttribute('data-category') || '';
         const shouldShow = filter === 'all' || categories.includes(filter);
         
         // Add filtering class for smooth transitions
@@ -60,17 +61,28 @@ function filterCTFCards(cards, filter) {
     updateResultsCounter(cards, filter);
 }
 
+// May be used later for a results functionnal counter
 function updateResultsCounter(cards, filter) {
     const visibleCards = Array.from(cards).filter(card => {
-        const categories = card.getAttribute('data-category');
+        const categories = card.getAttribute('data-category') || '';
         return filter === 'all' || categories.includes(filter);
     });
+    // Update counter element if it exists
+    const counterElement = document.querySelector('#results-counter');
+    if (counterElement) {
+        counterElement.textContent = `Showing ${visibleCards.length} CTF(s)`;
+    }
     
-    // You can add a results counter element if desired
-    console.log(`Showing ${visibleCards.length} CTF(s) for filter: ${filter}`);
+    // Console log for debugging
+    console.log(`Filter: ${filter}, Showing ${visibleCards.length} CTF(s)`);
+    
+    // Also announce to screen readers if function exists
+    if (window.announceFilterChange) {
+        window.announceFilterChange(filter, visibleCards.length);
+    }
 }
 
-// CTF Card Interactions
+// CTF Card Interactions and link routing
 function setupCTFCardInteractions() {
     const ctfCards = document.querySelectorAll('.ctf-card');
     
@@ -78,7 +90,15 @@ function setupCTFCardInteractions() {
         // Click handler for navigation
         card.addEventListener('click', function() {
             const ctfName = this.querySelector('h3').textContent;
-            handleCTFNavigation(ctfName);
+            const url = `/general-ctfs/${ctfName.toLowerCase().replace(/\s+/g, '-')}`;
+            try {
+                window.location.href = url;
+            } catch (error) {
+                console.error(`Navigation to ${url} failed:`, error);
+                // Fallback: show coming soon page
+                // window.location.href = "/coming-soon.html"
+
+            }
         });
         
         // Enhanced hover effects
@@ -88,7 +108,11 @@ function setupCTFCardInteractions() {
             // Animate logo/emoji
             const logo = this.querySelector('.ctf-logo, .ctf-emoji');
             if (logo) {
-                logo.style.transform = 'scale(1.1) rotate(5deg)';
+                if (logo.classList.contains('ctf-logo')) {
+                    logo.style.transform = 'scale(1.1) rotate(5deg)';
+                } else {
+                    logo.style.transform = 'scale(1.1) rotate(-5deg)';
+                }
             }
             
             // Animate tags
@@ -127,83 +151,75 @@ function setupCTFCardInteractions() {
     });
 }
 
-function handleCTFNavigation(ctfName) {
-    // In a real application, you would navigate to the specific CTF page
-    console.log(`Navigating to CTF: ${ctfName}`);
-    
-    // Example implementations:
-    // window.location.href = `/ctf/${ctfName.toLowerCase().replace(/\s+/g, '-')}`;
-    // or show a modal with CTF details
-    // or load content dynamically
-    
-    // For demo purposes, show an alert
-    showCTFModal(ctfName);
+// Handle image loading errors
+function setupImageErrorHandling() {
+    const images = document.querySelectorAll('.ctf-logo');
+    images.forEach(img => {
+        img.addEventListener('error', function() {
+            const parent = this.parentElement;
+            const ctfName = parent.parentElement.querySelector('h3').textContent;
+            parent.innerHTML = `<div class="ctf-emoji">🚩</div>`;
+        });
+        
+        // Add loading state
+        img.addEventListener('load', function() {
+            this.style.opacity = '1';
+        });
+        
+        img.style.opacity = '0';
+        img.style.transition = 'opacity 0.3s ease';
+    });
 }
 
-function showCTFModal(ctfName) {
-    // Create a simple modal (you could enhance this)
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.8);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 2000;
-        animation: fadeIn 0.3s ease;
-    `;
-    
-    modal.innerHTML = `
-        <div style="
-            background: linear-gradient(135deg, #1a1a1a, #2a2a2a);
-            padding: 2rem;
-            border-radius: 15px;
-            border: 2px solid #ff6b1a;
-            text-align: center;
-            max-width: 400px;
-            animation: slideIn 0.3s ease;
-        ">
-            <h2 style="color: #ff6b1a; margin-bottom: 1rem;">Opening ${ctfName}</h2>
-            <p style="color: #ff8c42; margin-bottom: 2rem;">This would navigate to the CTF writeups page...</p>
-            <button onclick="this.parentElement.parentElement.remove()" style="
-                background: #ff6b1a;
-                color: #000;
-                border: none;
-                padding: 0.8rem 2rem;
-                border-radius: 25px;
-                cursor: pointer;
-                font-weight: bold;
-            ">Close</button>
-        </div>
-    `;
-    
-    // Add CSS animations
-    const style = document.createElement('style');
-    style.textContent = `
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes slideIn {
-            from { transform: scale(0.8) translateY(-20px); opacity: 0; }
-            to { transform: scale(1) translateY(0); opacity: 1; }
-        }
-    `;
-    document.head.appendChild(style);
-    
-    document.body.appendChild(modal);
-    
-    // Close on outside click
-    modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            modal.remove();
-        }
+// Accessibility enhancements
+function setupAccessibilityFeatures() {
+    const ctfCards = document.querySelectorAll('.ctf-card');
+    ctfCards.forEach(card => {
+        // Add ARIA labels
+        const ctfName = card.querySelector('h3').textContent;
+        card.setAttribute('aria-label', `Navigate to ${ctfName} writeup`);
+        card.setAttribute('role', 'button');
+        
+        // Add focus styles
+        card.addEventListener('focus', function() {
+            this.style.outline = '2px solid #ff6b1a';
+            this.style.outlineOffset = '2px';
+        });
+        card.addEventListener('blur', function() {
+            this.style.outline = '';
+            this.style.outlineOffset = '';
+        });
     });
     
-    // Close on escape key
-    document.addEventListener('keydown', function(e) {
-        if (e
+    // Add ARIA labels to filter buttons
+    const filterButtons = document.querySelectorAll('.filter-btn');
+    filterButtons.forEach(button => {
+        const filter = button.getAttribute('data-filter');
+        button.setAttribute('aria-label', `Filter CTFs by ${filter === 'all' ? 'all categories' : filter + ' category'}`);
+        button.setAttribute('role', 'tab');
+    });
+}
+
+// Additional debugging function
+function debugFilterSystem() {
+    console.log('=== CTF Filter Debug Info ===');
+    
+    const cards = document.querySelectorAll('.ctf-card');
+    cards.forEach((card, index) => {
+        const title = card.querySelector('h3').textContent;
+        const categories = card.getAttribute('data-category');
+        console.log(`Card ${index + 1}: "${title}" - Categories: "${categories}"`);
+    });
+    
+    const buttons = document.querySelectorAll('.filter-btn');
+    console.log('Available filters:');
+    buttons.forEach(btn => {
+        const filter = btn.getAttribute('data-filter');
+        console.log(`- ${filter}`);
+    });
+}
+
+// Call debug function on page load (remove in production)
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(debugFilterSystem, 500);
+});

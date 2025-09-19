@@ -15,62 +15,6 @@ async function loadComponent(elementId, filePath) {
     }
 }
 
-// Fallback function for local development
-function loadComponentFallback(elementId, filePath) {
-    if (filePath.includes('header.html')) {
-        document.getElementById(elementId).innerHTML = `
-            <nav class="navbar">
-                <div class="nav-container">
-                    <a href="#" class="logo">⚡ CyberSec Chronicles</a>
-                    <ul class="nav-links">
-                        <li><a href="#home">Home</a></li>
-                        <li><a href="#about">About</a></li>
-                        <li><a href="#writeups">Writeups</a></li>
-                        <li><a href="#tools">Tools</a></li>
-                        <li><a href="#contact">Contact</a></li>
-                    </ul>
-                </div>
-            </nav>
-        `;
-    } else if (filePath.includes('footer.html')) {
-        document.getElementById(elementId).innerHTML = `
-            <footer class="footer">
-                <div class="container">
-                    <div class="footer-content">
-                        <div class="footer-section">
-                            <h3>Quick Links</h3>
-                            <p><a href="#latest">Latest Writeups</a></p>
-                            <p><a href="#popular">Popular Posts</a></p>
-                            <p><a href="#resources">Resources</a></p>
-                            <p><a href="#tools">Security Tools</a></p>
-                        </div>
-                        <div class="footer-section">
-                            <h3>Categories</h3>
-                            <p><a href="#web">Web Security</a></p>
-                            <p><a href="#binary">Binary Exploitation</a></p>
-                            <p><a href="#crypto">Cryptography</a></p>
-                            <p><a href="#forensics">Digital Forensics</a></p>
-                        </div>
-                        <div class="footer-section">
-                            <h3>Connect</h3>
-                            <p><a href="mailto:contact@cybersecchronicles.com">Email Me</a></p>
-                            <div class="social-links">
-                                <a href="#" title="Twitter">🐦</a>
-                                <a href="#" title="GitHub">🐙</a>
-                                <a href="#" title="LinkedIn">💼</a>
-                                <a href="#" title="Discord">🎮</a>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="footer-bottom">
-                        <p>&copy; 2024 CyberSec Chronicles. Built with passion for the cybersecurity community.</p>
-                    </div>
-                </div>
-            </footer>
-        `;
-    }
-}
-
 // Initialize the page
 document.addEventListener('DOMContentLoaded', function() {
     // Load header and footer
@@ -98,13 +42,14 @@ function initializeEventListeners() {
     });
 
     // Add click handlers to category cards, grabs the H3 header as category name for dynamic routing
+    //For the category cards
     document.querySelectorAll('.category-card').forEach(card => {
         card.addEventListener('click', function() {
             const category = this.querySelector('h3').textContent;
             window.location.href = `/${category.toLowerCase().replace(' ', '-')}`;
         });
     });
-
+    
     // Navbar scroll effect
     window.addEventListener('scroll', function() {
         const navbar = document.querySelector('.navbar');
@@ -148,20 +93,6 @@ function initializeEventListeners() {
     }
 }
 
-// Utility function to handle category navigation
-function navigateToCategory(categoryName) {
-    // This would be implemented based on your routing system
-    console.log(`Navigating to ${categoryName} category`);
-    // Example: window.location.href = `/writeups/${categoryName.toLowerCase().replace(/\s+/g, '-')}`;
-}
-
-// Function to handle contact form (if you add one later)
-function handleContactForm(event) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    console.log('Contact form submitted:', Object.fromEntries(formData));
-    alert('Thank you for your message! I\'ll get back to you soon.');
-}
 
 // Function to toggle mobile menu (for future mobile menu implementation)
 function toggleMobileMenu() {

@@ -112,13 +112,19 @@
     transform: scale(1);
 }
 
+/*DEBUG*/
+.ctf-card.hidden {
+    display: none !important;
+}
+
+/*
 .ctf-card.hidden {
     opacity: 0;
     transform: scale(0.8);
     pointer-events: none;
     transition: all 0.3s ease;
 }
-
+*/
 .ctf-card::before {
     content: '';
     position: absolute;
@@ -225,12 +231,6 @@
     font-size: 0.8rem;
     font-weight: bold;
     text-transform: uppercase;
-}
-
-.ctf-difficulty:contains("Easy") {
-    background: rgba(46, 160, 67, 0.2);
-    color: #4CAF50;
-    border: 1px solid #4CAF50;
 }
 
 .ctf-card .ctf-difficulty {

@@ -118,12 +118,9 @@ body {
     width: 200px;
     height: 200px;
     border-radius: 50%;
-    background: linear-gradient(45deg, #ff6b1a, #ff8c42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 4rem;
-    color: #000;
+    object-fit: cover; 
+    /* Fallback if GIF fails to load */
+    background: linear-gradient(45deg, #ff6b1a, #ff8c42); 
     margin: 0 auto;
     box-shadow: 0 0 30px rgba(255, 107, 26, 0.4);
     transition: transform 0.3s ease;
