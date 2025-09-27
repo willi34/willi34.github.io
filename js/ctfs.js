@@ -168,6 +168,10 @@ function setupImageErrorHandling() {
         
         img.style.opacity = '0';
         img.style.transition = 'opacity 0.3s ease';
+
+        if (img.complete) {
+            img.style.opacity = '1';
+        }
     });
 }
 
