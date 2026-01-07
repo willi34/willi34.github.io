@@ -63,15 +63,83 @@
     font-weight: bold;
 }
 
+/* For pagination of results */
+.post-card.hidden {
+    display: none !important;
+}
+
+.pagination-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 2rem;
+    margin-top: 3rem;
+}
+
+.load-more:disabled {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.05);
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* For difficulty styling in tags */
 .post-difficulty {
     padding: 0.3rem 0.8rem;
     border-radius: 15px;
     font-size: 0.8rem;
     font-weight: bold;
     text-transform: uppercase;
-    background: rgba(255, 107, 26, 0.2);
-    color: #ff6b1a;
-    border: 1px solid #ff6b1a;
+    border: 1px solid transparent;
+    display: inline-block;
+}
+
+.post-difficulty[data-diff="Very Easy"], 
+.diff-btn[data-difficulty="Very Easy"].active {
+    background: rgba(104, 11, 255, 0.15) !important;
+    color: #b248f0 !important;
+    border: 1px solid rgb(154, 95, 248) !important;
+}
+
+.post-difficulty[data-diff="Easy"], 
+.diff-btn[data-difficulty="Easy"].active {
+    background: rgba(87, 255, 87, 0.15) !important;
+    color: #57ff57 !important;
+    border: 1px solid rgba(87, 255, 87, 0.4) !important;
+}
+
+.post-difficulty[data-diff="Medium"], 
+.diff-btn[data-difficulty="Medium"].active {
+    background: rgba(255, 159, 14, 0.15) !important;
+    color: #ff9f0e !important;
+    border: 1px solid rgba(255, 159, 14, 0.4) !important;
+}
+
+.post-difficulty[data-diff="Hard"], 
+.diff-btn[data-difficulty="Hard"].active {
+    background: rgba(255, 62, 62, 0.15) !important;
+    color: #ff3e3e !important;
+    border: 1px solid rgba(255, 62, 62, 0.4) !important;
+}
+
+.post-difficulty[data-diff="Insane"], 
+.diff-btn[data-difficulty="Insane"].active {
+    background: rgba(95, 95, 95, 0.15) !important;
+    color: #919191 !important;
+    border: 1px dotted rgba(255, 0, 0, 0.4) !important;
+}
+
+/* Inactive button state */
+.diff-btn {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
 }
 
 .post-description {

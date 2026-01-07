@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Challenge Posts</title>
+    <title>HTB Writeups - Challenge Posts</title>
     <link rel="stylesheet" href="/css/styles.css">
-    <link rel="stylesheet" href="/css/ctfs.css">
     <link rel="stylesheet" href="/css/posts.css">
+    <link rel="stylesheet" href="/css/htb.css">
 </head>
 <body>
-    <!-- Header will be loaded here -->
     <div id="header-placeholder"></div>
 
     <section class="posts-section">
@@ -18,20 +17,29 @@
                 <h1>HTB writeups</h1>
                 <p>Explore write-ups for various retired HTB boxes.</p>
             </div>
-            <div class="posts-list">
+
+            <div class="filter-controls">
+                <div class="search-wrapper">
+                    <input type="text" id="tagSearch" placeholder="Search by tags (e.g. LFI, SQLi, Docker)...">
+                </div>
+                <div class="difficulty-filters">
+                    <button class="diff-btn active" data-difficulty="Easy" style="--diff-color: #57ff57;">Easy</button>
+                    <button class="diff-btn active" data-difficulty="Medium" style="--diff-color: #ff9f0e;">Medium</button>
+                    <button class="diff-btn active" data-difficulty="Hard" style="--diff-color: #ff3e3e;">Hard</button>
+                    <button class="diff-btn active" data-difficulty="Insane" style="--diff-color: #5c5c5c;">Insane</button>
+                </div>
+            </div>
+
+            <div class="posts-list" id="postsList">
                 <a href="medium/ambassador.html" class="post-card">
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Ambassador</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Exploiting a known local file inclusion vulnerability within Grafana and using an old Consul token to gain command execution as root.
-                        </p>
+                        <p class="post-description">Exploiting a known LFI within Grafana and using a Consul token to gain root.</p>
                         <div class="post-tags">
-                            <span class="tag">LFI</span>
-                            <span class="tag">Grafana</span>
-                            <span class="tag">Command Injection</span>
+                            <span class="tag">LFI</span><span class="tag">Grafana</span><span class="tag">Command Injection</span>
                         </div>
                     </div>
                 </a>
@@ -40,14 +48,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Builder</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Exploiting a recent local file inclusion vulnerability within Jenkins to retrieve a user hash and decrypting root's private SSH key with the script console.
-                        </p>
+                        <p class="post-description">Exploiting LFI in Jenkins to retrieve hashes and decrypting SSH keys.</p>
                         <div class="post-tags">
-                            <span class="tag">LFI</span>
-                            <span class="tag">Jenkins</span>
+                            <span class="tag">LFI</span><span class="tag">Jenkins</span>
                         </div>
                     </div>
                 </a>
@@ -56,14 +61,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Celestial</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            A box vulnerable to a deserialization attack with data from a cookie and a kernel exploit to get to root.
-                        </p>
+                        <p class="post-description">Deserialization attack via cookies and a kernel exploit for root.</p>
                         <div class="post-tags">
-                            <span class="tag">Deserialization</span>
-                            <span class="tag">Kernel</span>
+                            <span class="tag">Deserialization</span><span class="tag">Kernel</span>
                         </div>
                     </div>
                 </a>
@@ -72,16 +74,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Cronos</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Brute-forcing a virtual host, bypassing a login page with SQL injection, code injection and abusing cron jobs to get to root.
-                        </p>
+                        <p class="post-description">Vhost brute-forcing, SQLi login bypass, and cron job abuse.</p>
                         <div class="post-tags">
-                            <span class="tag">Brute-Force</span>
-                            <span class="tag">SQLi</span>
-                            <span class="tag">Command Injection</span>
-                            <span class="tag">Cron Jobs</span>
+                            <span class="tag">Brute-Force</span><span class="tag">SQLi</span><span class="tag">Cron Jobs</span>
                         </div>
                     </div>
                 </a>
@@ -90,15 +87,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Haircut</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Brute-forcing an exposed PHP file vulnerable to command injection and exploiting a known vulnerability within the screen binary.
-                        </p>
+                        <p class="post-description">Command injection via PHP and screen binary SUID exploitation.</p>
                         <div class="post-tags">
-                            <span class="tag">Brute-Forcing</span>
-                            <span class="tag">Command Injection</span>
-                            <span class="tag">SUID</span>
+                            <span class="tag">Brute-Forcing</span><span class="tag">Command Injection</span><span class="tag">SUID</span>
                         </div>
                     </div>
                 </a>
@@ -107,15 +100,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Popcorn</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Triggering a malicious uploaded screenshot in a torrent hoster by changing its filename via an API and exploiting a kernel exploit.
-                        </p>
+                        <p class="post-description">Malicious file upload via API and kernel exploit.</p>
                         <div class="post-tags">
-                            <span class="tag">File Upload</span>
-                            <span class="tag">API</span>
-                            <span class="tag">Kernel</span>
+                            <span class="tag">File Upload</span><span class="tag">API</span><span class="tag">Kernel</span>
                         </div>
                     </div>
                 </a>
@@ -124,15 +113,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Ready</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Exploiting a known SSRF and CRLF injection vulnerability within an old version of GitLab and escaping a docker container to read the root flag.
-                        </p>
+                        <p class="post-description">SSRF/CRLF in Gitlab and Docker container escape.</p>
                         <div class="post-tags">
-                            <span class="tag">SSRF</span>
-                            <span class="tag">Gitlab</span>
-                            <span class="tag">Docker Escape</span>
+                            <span class="tag">SSRF</span><span class="tag">Gitlab</span><span class="tag">Docker Escape</span>
                         </div>
                     </div>
                 </a>
@@ -141,16 +126,11 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>SolidState</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Resetting a user's password to read his mail via an administration tool with default credentials and abusing a background process running as root.
-                        </p>
+                        <p class="post-description">SMTP administration abuse and root background process hijacking.</p>
                         <div class="post-tags">
-                            <span class="tag">Default Credentials</span>
-                            <span class="tag">SMTP</span>
-                            <span class="tag">Jail escape</span>
-                            <span class="tag">Cron Job</span>
+                            <span class="tag">Default Credentials</span><span class="tag">SMTP</span><span class="tag">Cron Job</span>
                         </div>
                     </div>
                 </a>
@@ -159,24 +139,28 @@
                     <div class="post-content">
                         <div class="post-header">
                             <h3>Tenten</h3>
-                            <span class="post-difficulty">Medium</span>
+                            <span class="post-difficulty" data-diff="Medium">Medium</span>
                         </div>
-                        <p class="post-description">
-                            Finding a picture with a known plugin vulnerability for WordPress that contains a hidden encrypted SSH key and abusing sudo privileges.
-                        </p>
+                        <p class="post-description">Wordpress plugin exploit, Steganography, and Sudo abuse.</p>
                         <div class="post-tags">
-                            <span class="tag">Wordpress</span>
-                            <span class="tag">Steganography</span>
-                            <span class="tag">Sudo Abuse</span>
+                            <span class="tag">Wordpress</span><span class="tag">Steganography</span><span class="tag">Sudo Abuse</span>
                         </div>
                     </div>
                 </a>
 
+                
+                </div>
+
+            <div class="pagination-container">
+                <button id="prevBtn" class="load-more" disabled>Previous</button>
+                <span id="pageIndicator" style="color: #ff6b1a; font-weight: bold;">Page 1</span>
+                <button id="nextBtn" class="load-more">Next</button>
             </div>
         </div>
     </section>
-    <!-- Footer will be loaded here -->
+
     <div id="footer-placeholder"></div>
     <script src="/js/script.js"></script>
+    <script src="/js/htb.js"></script>
 </body>
 </html>
