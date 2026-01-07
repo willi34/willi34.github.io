@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.3</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~8.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>bertolis</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10</td>
+</tr>
+</tbody>
+</table>
+<p>Exploiting a known SSRF and CRLF injection vulnerability within an old version of <code>GitLab</code> and escaping a docker container to read the root flag.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/14ba3406c45c3be382956d06f9ddaa18b9e6f9d2/uploads/2025-12-31T19-14-56-925Z-n5wlcgyp6.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p>We're presented with a <code>GitLab</code> instance :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/a02ecbc3009fe2d9ef618121a86493784ced6154/uploads/2025-12-31T19-15-57-566Z-5ohpvcbrh.jpg" /></p>
+<p><code>GitLab</code> is essentially a Git repository manager with a web interface. We register a user and create a dummy project :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/33cc84ceef84d6cefe1a2d596481fcb1bf4e5e56/uploads/2025-12-31T19-16-12-325Z-teuj7zirp.jpg" /></p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>Searching for known vulnerabilities within old versions of <code>GitLab</code>, I find this one <a href="https://github.com/dotPY-hax/gitlab_RCE">here</a>. There’s a nice proof of concept <a href="https://github.com/CS4239-U6/gitlab-ssrf">here</a> as well. To sum it up, it turns out there’s a SSRF (Server-Side Request Forgery) vulnerability where users can import their projects using the <code>Repo by URL</code> option. Instead of inputting a URL, a malicious actor can craft a payload that communicates with the internal Redis service. </p>
+<p>This is also possible because of another vulnerability, which allows users to inject carriage return line feeds (CRLF) when using the <code>git</code> protocol. CRLFs are universal symbols that represent a new line. These newlines are necessary for <code>Redis</code> commands to work. The exploit works by using the SSRF and the CRLF injection to communicate with <code>Redis</code> to queue a new job in order for us to target a specific function that executes code. Grabbing the script shamelessly, we get a shell :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/cc0d929931dc02d16a23541d8a57b5587990524b/uploads/2025-12-31T19-16-51-045Z-mtn1hhhe8.jpg" /></p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d1e5bdbcca7909d7c2837a2dda71f3583da475ef/uploads/2025-12-31T19-17-11-680Z-aajjvn5v8.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>There are a lot of things going on here. A bunch of hashes are laying around, there are possible SSH private keys in configuration files and there are multiple <code>GitLab</code> related users. More importantly, we are inside a docker container :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2f8dfb8fd59260715569c54fe78d40f54f41d512/uploads/2025-12-31T19-17-33-687Z-iowmw6cu0.jpg" /></p>
+<p>This happens because the web server was deployed using a docker container on the host. In order to get the final flag (the first is inside <code>/home/dude</code>), we’ll need to escape this container. There also seems to be the password for root inside the the root directory, but it doesn’t work with anything. </p>
+<p>Generally, we need to get root access in a container in order to move on since we’ll need extra privileges to do more powerful things (like using <code>mount</code> for example). There’s a backup directory in <code>/opt</code> with backups of important configuration files. In one of them, we find a password that is reusable for root :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e03d97c538787d44452c45037bf6a62571aeb3e1/uploads/2025-12-31T19-17-49-408Z-nb3ptm420.jpg" /></p>
+<p>Great, now we have full root access to the system inside this docker container. We can see that our container has a lot of capabilities thanks to <code>linpeas</code> (or something like <code>capsh –print</code>) and is probably running in high privileged mode. The first thing we can verify is whether our docker container has access to the original host's filesystem. This would mean that we could mount the host's filesystem inside the container and have access to its files.</p>
+<p>We can use the <code>fdisk</code> command to list the partitions on the host : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/438ced88d3446771e6bc6f2483133c8d74f0840c/uploads/2025-12-31T19-18-04-632Z-gk1epowe5.jpg" /></p>
+<p>To view the mountpoints (where a filesystem is attached), we can use the <code>lsblk</code> command. We see that <code>/dev/sda2</code> is the partition used on the host. All we have to do is create a new directory and mount the partition on it, which means all the files from the host will be available from that new directory as if we were on it already :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/27717f2b0a66cf23ee79e0f7658198843d894c0c/uploads/2025-12-31T19-18-21-070Z-7iae9nbkk.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

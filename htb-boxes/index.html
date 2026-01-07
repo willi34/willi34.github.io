@@ -15,58 +15,163 @@
     <section class="posts-section">
         <div class="container">
             <div class="page-header">
-                <h1>Challenge Posts</h1>
-                <p>Explore write-ups and notes for various CTF challenges.</p>
+                <h1>HTB writeups</h1>
+                <p>Explore write-ups for various retired HTB boxes.</p>
             </div>
             <div class="posts-list">
-                <a href="#" class="post-card">
+                <a href="medium/ambassador.html" class="post-card">
                     <div class="post-content">
                         <div class="post-header">
-                            <h3>SQL Injection Challenge</h3>
+                            <h3>Ambassador</h3>
                             <span class="post-difficulty">Medium</span>
                         </div>
                         <p class="post-description">
-                            A web-based challenge requiring bypassing a login form using SQL injection techniques to access hidden data.
+                            Exploiting a known local file inclusion vulnerability within Grafana and using an old Consul token to gain command execution as root.
                         </p>
                         <div class="post-tags">
+                            <span class="tag">LFI</span>
+                            <span class="tag">Grafana</span>
+                            <span class="tag">Command Injection</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="medium/builder.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>Builder</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Exploiting a recent local file inclusion vulnerability within Jenkins to retrieve a user hash and decrypting root's private SSH key with the script console.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">LFI</span>
+                            <span class="tag">Jenkins</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="medium/celestial.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>Celestial</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            A box vulnerable to a deserialization attack with data from a cookie and a kernel exploit to get to root.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Deserialization</span>
+                            <span class="tag">Kernel</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="medium/cronos.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>Cronos</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Brute-forcing a virtual host, bypassing a login page with SQL injection, code injection and abusing cron jobs to get to root.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Brute-Force</span>
                             <span class="tag">SQLi</span>
-                            <span class="tag">Union-based</span>
-                            <span class="tag">Authentication Bypass</span>
+                            <span class="tag">Command Injection</span>
+                            <span class="tag">Cron Jobs</span>
                         </div>
                     </div>
                 </a>
-                <a href="#" class="post-card">
+
+                <a href="medium/haircut.html" class="post-card">
                     <div class="post-content">
                         <div class="post-header">
-                            <h3>Buffer Overflow Exploit</h3>
-                            <span class="post-difficulty">Hard</span>
+                            <h3>Haircut</h3>
+                            <span class="post-difficulty">Medium</span>
                         </div>
                         <p class="post-description">
-                            A binary exploitation challenge involving overwriting the stack to gain control of the program flow.
+                            Brute-forcing an exposed PHP file vulnerable to command injection and exploiting a known vulnerability within the screen binary.
                         </p>
                         <div class="post-tags">
-                            <span class="tag">Buffer Overflow</span>
-                            <span class="tag">Shellcode</span>
-                            <span class="tag">Reverse Shell</span>
+                            <span class="tag">Brute-Forcing</span>
+                            <span class="tag">Command Injection</span>
+                            <span class="tag">SUID</span>
                         </div>
                     </div>
                 </a>
-                <a href="#" class="post-card">
+
+                <a href="medium/popcorn.html" class="post-card">
                     <div class="post-content">
                         <div class="post-header">
-                            <h3>XSS Playground</h3>
-                            <span class="post-difficulty">Easy</span>
+                            <h3>Popcorn</h3>
+                            <span class="post-difficulty">Medium</span>
                         </div>
                         <p class="post-description">
-                            A challenge focused on executing a cross-site scripting attack to steal user cookies.
+                            Triggering a malicious uploaded screenshot in a torrent hoster by changing its filename via an API and exploiting a kernel exploit.
                         </p>
                         <div class="post-tags">
-                            <span class="tag">XSS</span>
-                            <span class="tag">Reflected</span>
-                            <span class="tag">Cookie Theft</span>
+                            <span class="tag">File Upload</span>
+                            <span class="tag">API</span>
+                            <span class="tag">Kernel</span>
                         </div>
                     </div>
                 </a>
+
+                <a href="medium/ready.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>Ready</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Exploiting a known SSRF and CRLF injection vulnerability within an old version of GitLab and escaping a docker container to read the root flag.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">SSRF</span>
+                            <span class="tag">Gitlab</span>
+                            <span class="tag">Docker Escape</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="medium/solidstate.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>SolidState</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Resetting a user's password to read his mail via an administration tool with default credentials and abusing a background process running as root.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Default Credentials</span>
+                            <span class="tag">SMTP</span>
+                            <span class="tag">Jail escape</span>
+                            <span class="tag">Cron Job</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="medium/tenten.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>Tenten</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Finding a picture with a known plugin vulnerability for WordPress that contains a hidden encrypted SSH key and abusing sudo privileges.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Wordpress</span>
+                            <span class="tag">Steganography</span>
+                            <span class="tag">Sudo Abuse</span>
+                        </div>
+                    </div>
+                </a>
+
             </div>
         </div>
     </section>

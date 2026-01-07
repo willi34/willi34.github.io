@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.8</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~6k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>r00tkie</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3/10</td>
+</tr>
+</tbody>
+</table>
+<p>Brute-forcing an exposed PHP file vulnerable to command injection and exploiting a known vulnerability within the <code>screen</code> binary.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d6d7ab36b33bd181d7e24a7755036d46c854a4e0/uploads/2025-12-31T20-06-30-748Z-g52retar5.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/6fd29f53d52864869c0a9fc04133541bcfc97c0f/uploads/2025-12-31T20-06-48-339Z-clofav0gj.jpg" /></p>
+<p>We can start with file enumeration by brute-force with <code>gobuster</code>. While searching for more file types with the <code>-x</code> option, we find a singular PHP file as well :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/70b98f5636efee5eabb8ce4e17c35b2bee9aa8f7/uploads/2025-12-31T20-07-02-771Z-w1fxdjkvg.jpg" /></p>
+<p>The file allows users to request a page coming from the website. We can test this feature by requesting one of the HTML files we found :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/bfb0b8f71ad4e45c7354d09c06b823e3318673ef/uploads/2025-12-31T20-07-19-122Z-07mo3knn1.jpg" /></p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>Since we can coerce the server into making requests on our behalf, we can communicate with internal services with something like <code>http://localhost:&lt;port&gt;</code>. We can use Burpsuite’s intruder feature to try common port numbers :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/f2fdd9ed85a3bcd312326ef8324e71aead53333b/uploads/2025-12-31T20-07-45-757Z-dyrqm4qpf.jpg" /></p>
+<p>In the results, we can check if communication was successful in the response. We can see that a MySQL database is running on port 3306 locally :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ccfcc7ca9dcf74e49e3d34b2e7c7f8e0bf4a7f2b/uploads/2025-12-31T20-07-59-916Z-mp9pkus3s.jpg" /></p>
+<p>We can also use different protocol schemes in the request as well. For example, we can try the <code>file://</code> scheme to read files :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/43d6dc53cc2c4b47b3cedb8630fdcf08c98bb278/uploads/2025-12-31T20-08-17-046Z-qyyp6maok.jpg" /></p>
+<p>This is possible because this scheme is used to read local files in the browser. We see the user <code>maria</code>, but it doesn’t seem like we can read her private SSH key. Thinking about files we can read, we can check the source code of the PHP file we’re using right now : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/70287bac67ae49828430615f7be8d21cff6ea554/uploads/2025-12-31T20-10-20-695Z-gvs8hul8d.jpg" /></p>
+<p>Here’s a closeup of the PHP :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/23f69846d965d7e576085dc8dfe6b736f2c133d0/uploads/2025-12-31T20-10-46-191Z-mvxafl9of.jpg" /></p>
+<p>Our input is being placed inside a <code>curl</code> command executed with <code>shell_exec</code>. That means we can probably inject our own commands with command substitutions, as they’ll first be executed to. We can test this pretty easily since we have the command output :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/63b5d8f32fc3926a468a60f5213a273bd5fe7105/uploads/2025-12-31T20-11-03-844Z-sld79nqk6.jpg" /></p>
+<p>Sweet! However, I can’t execute any reverse shell payloads, since the PHP file has a validation check that flags malicious characters needed for reverse shells to work. Instead though, I can upload my own PHP reverse shell to the web root directory.</p>
+<p>One problem though. Writing to <code>/var/www/html</code> doesn’t work. The syntax of our command is good, and our current user (<code>www-data</code>) should have write access to this directory. Unless he doesn’t. The only other folder we can upload and access via the web is the <code>/uploads</code> directory we found during the enumeration. Writing our reverse shell PHP file into this directory works :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/71923cb376859a987e5ef901c8c466514397cdb1/uploads/2025-12-31T20-11-41-921Z-qucmr0bj5.jpg" /></p>
+<p>Visiting <code>http://hair.htb/uploads/rev.php</code> triggers the reverse shell and gives us a foothold :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9fd809e2cb4a3bf3d17d5bfea8b6752393babb4f/uploads/2025-12-31T20-11-57-638Z-kxs7lo469.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>While running a privilege escalation script, we find an unknown SUID binary :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/45f1a68512281783a0b5a8b2cbbd33b62a40ebbe/uploads/2025-12-31T20-12-14-090Z-0rrjtlukg.jpg" /></p>
+<p>The <code>screen</code> program allows users to divide and manage their terminal sessions. Searching for ways to exploit this binary and its current version leads me <a href="https://www.exploit-db.com/exploits/41154">here</a>. Apparently, the screen command has a logging feature that can create a file with the same permissions as the binary owner.</p>
+<p>To summarize, we can use this feature to overwrite existing files as root, like the <code>/etc/ld.so.preload</code> file. This file can contain the shared libraries preloaded by the system before anything else for any program, overwriting default linking order. A shared object is a piece of code compiled to be shared with many other programs in order to reuse code. All we have to do is overwrite the preload file with a malicious shared object. </p>
+<p>We’ll start with our malicious shared object :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/a31d9bf056e0bed7b5667d9993797ee84a2f280b/uploads/2025-12-31T20-13-17-364Z-rmfkixw2j.jpg" /></p>
+<p>Before the main function executes, the program will change the ownership of a file called <code>rootshell</code> to belong to root and also allow users to execute it as if they were the owner. We then delete the original file if there was one.</p>
+<p>Our <code>rootshell</code> file looks like this :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5e91a6e94c79f46e19c8938aeb6dd7ca26e66ee5/uploads/2025-12-31T20-13-33-976Z-6tavm4j7i.jpg" /></p>
+<p>We set all of the id types (real IDs and effective IDs) to 0 and spawn a shell. With the appropriate permissions, we’ll be able to impersonate root in order to create a second shell binary where users will be able to execute it as if they were root.</p>
+<p>Once compiled, we can move into the <code>/etc</code> directory where we all make all new files writable (<code>umask 000</code>). This is because we’ll need write perms for our new file without it existing. </p>
+<p>Then, we can run the binary with the options and execute our new <code>rootshell</code> file :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/1dbde3e8c4b2f7d6620acbd85363ab7362196000/uploads/2025-12-31T20-13-49-835Z-qdfoa1drh.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

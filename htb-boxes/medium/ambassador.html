@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.4</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~7k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>DirectRoot</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10</td>
+</tr>
+</tbody>
+</table>
+<p>Exploiting a known local file inclusion vulnerability within <code>Grafana</code> and using an old <code>Consul</code> token to gain command execution as <code>root</code>. </p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/5b6fdfddd0b324d76727065d548146dc3d0dae78/uploads/2025-12-30T17-46-53-220Z-kknfxbqwb.jpg" /></p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7f21cc68ad1f03ea99c71fe98733a51eca829a3a/uploads/2025-12-30T17-47-07-398Z-yad667e2l.jpg" /></p>
+<h4 id="web-server-port-80">Web server (port 80)</h4>
+<p>We're presented with a custom web application :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d5aff7f819e07d83914be66d9ae7aba5adbb0a9e/uploads/2025-12-30T17-48-07-364Z-8rsv3agsd.jpg" /></p>
+<p>We can do some basic enumeration, but there doesn’t seem to be anything useful there except the mention of a user called <code>developer</code> in the most recent post.</p>
+<h4 id="web-server-port-3000">Web server (port 3000)</h4>
+<p>The web server on port 3000 is running <code>Grafana</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d1d09dcc13ea84c8b47128fc5a9ac2c9b8937679/uploads/2025-12-30T17-48-55-731Z-ngqb730uc.jpg" /></p>
+<p><code>Grafana</code> is a platform that allows users to import different sources of data to visually analyze them. Users can build their own dashboards to represent this data as well. Default credentials of <code>admin:admin</code> don’t work, but we can see the version number <code>v8.2.0</code> at the bottom.</p>
+<p>Searching for known vulnerabilities, we find this one <a href="https://www.exploit-db.com/exploits/50581">here</a>. It mentions a local file inclusion vulnerability in the <code>/public/plugins/</code> endpoint where we can supply the id of an installed plugins and see the asset files associated with it. There’s no input verification, allowing a malicious actor to step back into the root directory of the entire system (with <code>../../..</code> for example) to read arbitrary files.</p>
+<p>There’s even a Metasploit exploit in the database that we can use :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d0a4847b0d11b1928fd5e0be18c99af5e0f5f5bc/uploads/2025-12-30T17-49-18-114Z-1d9e4vp4m.jpg" /></p>
+<p>The default file to read option is <code>/etc/grafana/grafana.ini</code>. It’s the main configuration file, and it can contain sensitive information. Metasploit will return us the output of these files inside the <code>/home/&lt;user&gt;/.msf4/loot</code> directory where we can read them. Searching for passwords, we find the one for the admin user :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/207548c9a7350f4a1ac5b9cc272948783275e5e5/uploads/2025-12-30T17-49-33-620Z-2tw8ou8g2.jpg" /></p>
+<p>We can also read other sensitive files like <code>/etc/passwd</code> to verify the current users on the box :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/bc9ba22297f42f0f63fb0676276c19c453d2483b/uploads/2025-12-30T17-50-31-096Z-q6t7fdxlx.jpg" /></p>
+<p>We confirmed the existence of the <code>developer</code> user, which might come in handy later.</p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>We can login as admin into <code>Grafana</code> with the admin password we found. The menu on the left presents us with many options like building our own dashboard and importing data sources. Naturally, I’m more interested in the data sources. It looks there’s already a source connected to MySQL :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/cf7e48466b5253a55056e57acac64fb4b2c53348/uploads/2025-12-30T17-50-48-558Z-48i9ufe0y.jpg" /></p>
+<p>For this to happen, it’s very likely that there’s something managing the connection to the MySQL database. This can mean the database password can be stored somewhere in order to be used as authentication every time we query the data source. I asked my good friend ChatGPT about this :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/96ddfd258c3cb2211399b77b4c66b553935759be/uploads/2025-12-30T17-51-12-974Z-yegjjygw3.jpg" /></p>
+<p>Very swag. We can use the file inclusion vulnerability to read the YAML file responsible for configuring the data source to find the database password (which we can connect to by the way, since port 3306 is open). The filename probably isn’t <code>datasources.yaml</code> though, that’s just an example ChatGPT gave. It’s probably named <code>mysql.yaml</code> (after the data source), making the full path <code>/etc/grafana/provisioning/datasources/mysql.yaml</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/84e72a09498ef7a33cb1285752f0a4eeda3605f1/uploads/2025-12-30T17-52-47-402Z-l4serj56t.jpg" /></p>
+<p>Now we have access to the database on port 3306 :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b70500f689a2abcb65e76414ca7d99f0fb71d072/uploads/2025-12-30T17-53-31-532Z-j5chtkv0f.jpg" /></p>
+<p>The <code>grafana</code> database is empty. The <code>whackywidget</code> database has what we’re looking for :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/875dd7fe0c542069a4bdaea57bd0a8fb32333ee0/uploads/2025-12-30T17-53-48-549Z-66ugzaj3g.jpg" /></p>
+<p>It’s the base64-encoded SSH password for <code>developer</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2da66f25f500fccfc9a6d1c4f6d48f6fa6a69668/uploads/2025-12-30T17-54-14-715Z-leer6d6rg.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>During the usual enumeration, I find multiple mentions of something called <code>consul</code> : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b545927d3b322efadedef23ed974b4e4fd498d53/uploads/2025-12-30T17-56-08-535Z-osuc3ho72.jpg" /></p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ff9a55f0c5ab413a57a1fd3ec2b2812c370fc191/uploads/2025-12-30T17-56-21-634Z-oq6fi6xta.jpg" /></p>
+<p><code>Consul</code> is a service that enables machines and apps to find and communicate with each other to share config data.</p>
+<p>Upon further research, we find that there’s usually a web interface serving an API that allows users to interact with certain functions (like checking the health of hosts remotely). If we check the open ports on the machine, we can see just that :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/18298bbfd5f8f683bc56f4e14f5582783419cc94/uploads/2025-12-30T17-56-33-445Z-ibmewueu9.jpg" /></p>
+<p>Searching for known exploits of <code>consul</code>, we find this exploit <a href="https://www.exploit-db.com/exploits/51117">here</a>. It states that we can execute commands when doing a health check using the <code>/v1/agent/service/register</code> endpoint. To do so however, we need a valid token that authorizes this action. Luckily for me, I had already found this token during my initial enumeration. There’s a git repository in the <code>/opt/my-app</code> directory. We can find the plaintext token in an old version of a script :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/8c4f3f245d9dd7a167a16b3f6dd5be7b13dc61b1/uploads/2025-12-30T17-56-52-240Z-z4mcp4tit.jpg" /></p>
+<p>In both old and recent versions of the project, the script is creating a new key-value object with the password inside the <code>$MYSQL_PASSWORD</code> environment variable. The difference between both versions is the way it handles the authorization mechanism since creating this object requires specific permissions.</p>
+<p>In the old version, the authorization token is included inside the command line as an argument, an unsafe practice as it’s susceptible to be read by malicious actors in logs. In the new version, the token is taken from the environment variable <code>$CONSUL_HTTP_TOKEN</code>, which never sees the light of day.</p>
+<p>The lesson here is to be very careful with sensitive information inside of git repositories, because the old version of a project that has once been committed can always be restored. Anyways, there are multiple scripts ready for us to use to execute commands inside of health checks like this one <a href="https://www.exploit-db.com/exploits/51117">here</a>, where we can execute a reverse shell as root : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/223c44c4ffc80d7b81d4e723045c7129f5584bb6/uploads/2025-12-30T17-57-07-123Z-s2mrf09pu.jpg" /></p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/768808c7c4897cb9f05a373c66fe27f8e720fb05/uploads/2025-12-30T17-57-19-842Z-coko2d4z6.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

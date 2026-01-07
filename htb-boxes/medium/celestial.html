@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.8</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~7.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>3ndG4me</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10</td>
+</tr>
+</tbody>
+</table>
+<p>A box vulnerable to a deserialization attack with data from a cookie and a kernel exploit to get to root.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan for open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ec5a01457c9b98b17c835304c04b33ee9a3535b7/uploads/2025-12-29T19-14-41-735Z-q1ci6h5sc.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p>On the first visit, we get a weird 404 page. When we reload it though, we see something different :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b376321252fefb5033eb92113e9202a1a62f7056/uploads/2025-12-29T19-15-06-747Z-ux4xzbdxm.jpg" /></p>
+<p>That’s definitely odd. We can do some brute-forcing for files, folders and virtualhosts, but nothing pops up. The first question that should come to mind is : Where does this data come from? Is it being returned to us statically or do we have some degree of control over it? The answer to that question comes in the form of a cookie : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b213124852d9f9848e19ed8e6097dc549d63efbd/uploads/2025-12-29T19-16-16-927Z-jnego844o.jpg" /></p>
+<p>I'm using a Firefox browser extension to see the cookies tied to the site. A cookie is a piece of data used to keep track of user sessions and it can be used as an authorization mechanism. Our cookie data looks base64 encoded. We can use the <a href="https://www.jwt.io/">following</a> website to decode and format it for us :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/db2a5f68f482cbc48e852f74a85ee795cf0edf6f/uploads/2025-12-29T19-21-08-725Z-2b1gvey79.jpg" /></p>
+<p>Our cookie is just base64-encoded JSON data. We can notice that both the <code>username</code> and <code>num</code> values are the same ones present on the website page. If we changed the cookie JSON to hold arbitrary values, for example :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/54d61de69aa789d6008a593e6d94fd320a631cc2/uploads/2025-12-29T19-23-21-101Z-dmu0dupfo.jpg" /></p>
+<p>And used that cookie when visiting the web server, we'll see our injected values reflected back to us :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/f46f1c0723b3188e0d06ddce85c7943f62e6c28c/uploads/2025-12-29T19-24-26-901Z-cr59vwz8v.jpg" /></p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>There are many things we can do with this. First, we can inject our own HTML code inside the website. This is called a Cross Site Scripting (XSS) attack. Setting our username to <code>&lt;h1&gt;XSS&lt;/h1&gt;</code> in our cookie gives modifies the DOM of the page : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/492655bca9e269dd30ad291fbdf39333ea543fca/uploads/2025-12-29T19-25-55-219Z-gd36mxtjn.jpg" /></p>
+<p>This happens because our data is dynamically included in the site without being validated or escaped. It’s cool, but not all that useful in our case. Next, we can try to inject templates into the input to see if they are being evaluated. This is called Server-Side Template Injection (SSTI) and happens when templates are constructed server-side with user input.</p>
+<p>Trying payloads on the <code>num</code> filed yields interesting results that seem to confirm this vulnerability :  
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/379d47546392abafb6eae73417bb58b0dfc86573/uploads/2025-12-29T19-31-16-900Z-9e0nbjz16.jpg" /></p>
+<p>Something is evaluating our template and displaying the result. This could be a templating engine, which renders data into specific templates. If we could find what engine it is, we could craft a specific payload that it understands to get remote code execution. </p>
+<p>The website is using the Express framework using NodeJS. After searching for payloads that all end up not working, I end up stuck. The response behavior doesn’t match any known templating engine.</p>
+<p>My next thought was to generate an error that could maybe expose what kind of templating engine the server was using. During my initial testing of initial payloads, I had a lot of errors that looked like this :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7c9604b538544a1fc8fcebdbc0dda2a6a43a5dbf/uploads/2025-12-29T19-34-54-026Z-qrvefcoci.jpg" /></p>
+<p>I couldn’t really figure out why these errors were popping up as I was also getting a lot of unexpected token errors on payloads that had nothing wrong with them. Then, when trying to poke for errors, I came across this one :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/4c1650fd0086e70b6e90577f8c30d65779e3ec20/uploads/2025-12-29T19-35-42-015Z-qqa81sq9q.jpg" /></p>
+<p>Ah, there’s no templating engine at work here, it’s just that the backend uses the <code>eval</code> function to evaluate our input in the <code>num</code> field. </p>
+<p>After a bit of messing around trying to get past the errors, I come across another very interesting error (my payload here was <code>{“test”}</code> as a value inside the <code>num</code> field, I wanted to see if the server would evaluate it and print it back to me) :</p>
+<p><img alt="" src="https://willi-cybersec.com/wp-content/uploads/2024/08/unex.jpg" /></p>
+<p>Unserialize? That’s new. It looks like the server has been deserializing our payload all this time (which explains all the errors I had) on top of evaluating the input to add the numbers. Serializing is the process of turning objects into a data stream to be transported and used by something else. Deserializing refers to the opposite process. </p>
+<p>If user-controlled input is unserialized, an attacker can inject their own object to alter the behavior of the server or execute code. This can be due to functions that automatically execute within the object itself or magic functions that execute whenever data is unserialized. </p>
+<p>I found an article with a case similar to this one (<a href="https://opsecx.com/index.php/2017/02/08/exploiting-node-js-deserialization-bug-for-remote-code-execution/">here</a>), so we can follow along with it. I grabbed the script that serializes an object that executes a system command :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/739b6e1582b345eacd39d937277b412f352b9e71/uploads/2025-12-29T19-41-28-690Z-4ws1mofy3.jpg" /></p>
+<p>Encoding this in base64 and trying it as a cookie doesn’t work though, and we get an <code>Unexpected identifier</code> error. Luckily for us, the article also provides a link to a <a href="https://github.com/ajinabraham/Node.Js-Security-Course/blob/master/nodejsshell.py">script</a> that generates and payload for a reverse shell :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ff615155853a2518fb17b0b4ce0d54ed817e750a/uploads/2025-12-29T19-43-07-810Z-62lafzzuq.jpg" /></p>
+<p>This python script generates a reverse shell payload in a way that doesn’t use quotes by using ASCII endocing. If we replace the previous <code>function()</code> body of our last serialized payload with this, we should get code execution, right? </p>
+<p>Well not exactly. We still need the code to execute. Our serialized function needs to execute itself with <a href="https://en.wikipedia.org/wiki/Immediately_invoked_function_expression">IIFE</a> (Immediately Invoked Function Expression) brackets. The final payloads looks like this :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/33d46e7adfcdc85b99b14010209138a8d5c6402c/uploads/2025-12-29T19-46-15-871Z-c87cuaxm6.jpg" /></p>
+<p>We end up with as shell when we encode our payload in base64 and use it as a cookie :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b8a1e27d425c88a0bd5fb9118e72f2d486815cc1/uploads/2025-12-29T19-46-36-651Z-okmafrs71.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>In the current directory, we find the NodeJS file responsible for the application :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/33b78221205a39e9917d7627164f0eae490041ef/uploads/2025-12-29T19-55-14-491Z-qmnpcoife.jpg" /></p>
+<p>Immediately after running a privilege escalation script, we get a pretty big clue on what direction this privilege escalation is gonna go :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/1efe3aac2826f2f7453277a150e130730dea1f70/uploads/2025-12-29T19-55-36-536Z-7tcxarg53.jpg" /></p>
+<p><code>Linpeas</code> signals us that the current version of the kernel is most likely vulnerable to some sort of known exploit. This is called a kernel exploit, where a vulnerability will reside within the kernel of an operating system. A lot of these exploits will allow us to perform privilege escalation, but some of them can even cause denials of service. </p>
+<p>We can search the kernel version <code>4.4.0-31-generic</code> online to find multiple exploit scripts. I used this one <a href="https://www.exploit-db.com/exploits/45010">here</a>, which exploits an arbitrary <code>read/write</code> on the kernel itself. There is a compiler available on the target (<code>gcc</code>), which means we can compile it there after transferring the exploit from our machine with <code>gcc -o exploit exploit.c</code> then execute the script to get root access :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/a6a805f048593d0217380ad6291e85b62d9e60a2/uploads/2025-12-29T20-03-00-354Z-ovhs7pxc8.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

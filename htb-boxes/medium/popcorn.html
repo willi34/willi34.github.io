@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.9</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~13.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>ch4p</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3/10</td>
+</tr>
+</tbody>
+</table>
+<p>Triggering a malicious uploaded screenshot in a torrent hoster by changing its filename via an API and exploiting a kernel exploit.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e1a12084882e2aeb1712a7d9dd72a18b6d068580/uploads/2025-12-30T18-24-23-679Z-fl28pl6n6.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7deaaf0135e6a90801762afd952da371e04f7d91/uploads/2025-12-30T18-24-40-266Z-yuvc15mk0.jpg" /></p>
+<p>We can find a couple of pages with <code>gobuster</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/effc4ec68354f0e789b1cd8f237c8b75a4efe795/uploads/2025-12-30T18-32-43-921Z-txibhi20h.jpg" /></p>
+<p><code>Index</code> is the index page we observed earlier. The <code>test</code> page appears to be output from the <code>phpinfo()</code> function :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/709f01c149d0125daf2f8bca6a42a2de94bc979c/uploads/2025-12-30T18-32-58-865Z-kwddb0p91.jpg" /></p>
+<p>The rename page appears to be an endpoint that uses an API to rename a file of our choice :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/00bb6453f1c1937bf6fcda6f64eb59498944b66f/uploads/2025-12-30T18-33-49-041Z-exqe42qpx.jpg" /></p>
+<p>This can be very interesting if we can upload a file somewhere that only allows images. We could upload a PHP file with an extension belonging to an image and change the name back to have a PHP extension for code execution. I’ll keep this idea in mind as we explore the last page :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/6bf3a6b531e830bd5e71da59cd6b1036591588de/uploads/2025-12-30T18-34-01-222Z-qecqihiwt.jpg" /></p>
+<p>A torrent hoster is a platform that allows users to upload, share and download torrent files. A torrent file is just metadata on how to actually download that file from other sources (called peers). This is because files are divided into different pieces that all need to be downloaded in a decentralised fashion. </p>
+<p>We can see a torrent file has already been uploaded. It contains instructions on downloading a Kali Linux ISO file :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/b31ef99fcb1ef55fe2d3309bba7c6e9ec95d7f37/uploads/2025-12-30T18-35-57-015Z-kcda35iux.jpg" /></p>
+<p>To upload our own torrent file, we need to register a user account (top right of the page). After doing so, we can choose in what category the file belongs :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c6308d3087fb0841797c548bc6b207439f91a6f3/uploads/2025-12-30T18-36-34-450Z-k0xshow26.jpg" /></p>
+<p>We can also choose if we want to post anonymously. I’ll steal this idea of uploading a Kali Linux ISO torrent file to test the upload functionality. Remember, we are looking for ways to upload files. After the download, we notice another feature of the upload while trying to edit our torrent file :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ebac6d354875efcaf989d292bb531bf7377264a9/uploads/2025-12-30T18-36-48-765Z-jfiinegav.jpg" /></p>
+<p>This feature is only accessible if you choose to not post anonymously. While hovering on the current picture displayed, we can see where the image is stored :
+<code>http://popcorn.htb/torrent/upload/noss.png</code></p>
+<p>We can upload our own screenshot as well, and we know where the server stores the screenshot uploads. We are only allowed certain filetypes :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/1c2a2af737b1c2c0ec577feefd7f209e59b47442/uploads/2025-12-30T18-37-09-854Z-psr2x8wnz.jpg" /></p>
+<p>Like I mentioned before, this doesn’t matter because we can change the filename after with the rename page. After uploading our PHP reverse shell with a JPEG extension, we can visit the the <code>/torrent/upload</code> folder to see our screenshot :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9f0cbe0dc6207f6ffeb06ae2c82a8a3c552e2a76/uploads/2025-12-30T18-37-28-762Z-ms72mn568.jpg" /></p>
+<p>The second one is ours (the first is used by the already existing upload) and the filename got changed. I’ll copy and paste the filename and go to <code>/rename</code>. Let’s test it out with non-existing files :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ba9af6bdb642a16f297ed10ad97a4dc2dcc5f64c/uploads/2025-12-30T18-37-57-057Z-90kahnuzx.jpg" /></p>
+<p>The web root directory is <code>/var/www</code> (we could’ve also verified this in the <code>phpinfo</code> function output in the test page). This means our screenshot is in <code>/var/www/torrent/upload</code>. Not only can we rename our file, we can also move it to this current directory :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/19a307130ae602c5a1761e0c59d69b7a4d3e0b38/uploads/2025-12-30T18-39-03-259Z-6d04kmn5q.jpg" /></p>
+<p>Now, there should be a file called <code>rev.php</code> inside <code>/var/www</code>, meaning we can access and trigger it from <code>http://popcorn.htb/rev.php</code>. </p>
+<p>We set up a listener and get a connection back as <code>www-data</code> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/12fe87980073e7dd8bf740299b573fd434def0d3/uploads/2025-12-30T18-39-17-443Z-jhm4ta0l4.jpg" /></p>
+<h2 id="privilege-escalation">Privilege escalation</h2>
+<p>The first flag is in a home directory and is readable by all. We also find a password for the database running locally and hashes for the admin user, but I wasn’t able to make anything of it.</p>
+<p>It’s also obvious we're on an older system. Running <code>linpeas</code>, we get a bunch of suggestions for kernel exploits and we can take note of its version :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/15f5d542c32d4b20f04d08e5f30086b672c02408/uploads/2025-12-30T18-40-09-063Z-ueoifbtsi.jpg" /></p>
+<p>Searching online for an exploit reveals one dubbed <code>dirtycow</code>. This vulnerability allows the modification of read-only files via a race condition. <a href="https://tsitsiflora.medium.com/dirty-cow-vulnerability-an-analysis-fdf50243dc6">This</a> article explains it nicely. The variation of the exploit found <a href="https://github.com/firefart/dirtycow">here</a> adds a new user into the <code>/etc/passwd</code> with the UID of <code>0</code>, effectively creating a new root user :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/728eac2de403d68f1e635a36d21a1e393cc0386a/uploads/2025-12-30T18-41-12-190Z-v9vrueja9.jpg" /></p>
+<p>My shell broke here, so I reconnected myself with the same uploaded reverse shell to find our new user :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/52be5d659b270b081901c0dc3bfe4eab963ede40/uploads/2025-12-30T18-41-50-302Z-04k2v88mr.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

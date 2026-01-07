@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Challenge Posts</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/ctfs.css">
+    <link rel="stylesheet" href="/css/posts.css">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+
+    <section class="posts-section">
+        <div class="container">
+            <div class="page-header">
+                <h1>Challenge Posts</h1>
+                <p>Explore writeups and notes for University CTF 2025 edition by HackTheBox.</p>
+            </div>
+            <div class="posts-list">
+
+                <!-- We can manually set the links here instead of having javascript handle dynamic routing -->
+                <a href="silentsnow.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>SilentSnow</h3>
+                            <span class="post-difficulty">Very easy</span>
+                        </div>
+                        <p class="post-description">
+                            Bypassing a falty Wordpress administrator check and overwriting global options by exploiting a plugin.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Wordpress</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="deadroute.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>DeadRoute</h3>
+                            <span class="post-difficulty">Easy</span>
+                        </div>
+                        <p class="post-description">
+                            Using a race condition in a custom Go router implementation to bypass a localhost check and using a path traversal for arbitrary file read.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">Go</span>
+                            <span class="tag">Race condition</span>
+                            <span class="tag">Path traversal</span>
+                        </div>
+                    </div>
+                </a>
+
+                <a href="peppermintroute.html" class="post-card">
+                    <div class="post-content">
+                        <div class="post-header">
+                            <h3>PeppermintRoute</h3>
+                            <span class="post-difficulty">Medium</span>
+                        </div>
+                        <p class="post-description">
+                            Using a functionnality of a MySQL NodeJS client to get SQLi through prepared statements, exploiting a path traversal within a custom zip parser to overwrite files and getting RCE by causing a fatal error.
+                        </p>
+                        <div class="post-tags">
+                            <span class="tag">NodeJS</span>
+                            <span class="tag">SQLi</span>
+                            <span class="tag">Path traversal</span>
+                            <span class="tag">Error handling</span>
+                        </div>
+                    </div>
+                </a>
+
+            </div>
+        </div>
+    </section>
+    <!-- Footer will be loaded here -->
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

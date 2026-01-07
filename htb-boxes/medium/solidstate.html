@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.8</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~13.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>ch33zplz</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>3.5/10</td>
+</tr>
+</tbody>
+</table>
+<p>Resetting a user’s password to read his mail via an administration tool with default credentials and abusing a background process running as root.  </p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9fd3ec935af08a8b12e6939a4e1e4182873055cd/uploads/2025-12-31T18-40-23-952Z-hv7z8dmtl.jpg" /></p>
+<p>JAMES (Java Apache Mail Enterprise Server) is an email server that incorporates the SMTP, POP3 and IMAP protocols. We can see that port 25 (SMTP) and 110 (POP3) are open. Port 4555 is open as well, it looks like an administrative tool we can connect to in order to manage the server.</p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>Searching for an exploit in the <code>2.3.2</code> version of JAMES, we find an interesting potential remote code execution <a href="https://www.exploit-db.com/exploits/50347">here</a>. If we had access to the administration tool we could create a new user. After creation, a directory is created to store the emails of that specific user. The directory name is derived from the user’s name. This value isn’t sanitized, which allows an attacker to craft a username like so : </p>
+<pre class="codehilite"><code>../../../../../../../../etc/bash_completion.d
+</code></pre>
+
+<p>Files in the <code>/etc/bash_completed.d</code> directory are executed when a user logs into SSH (system-wide). If we send an email with commands inside, it will be stored inside this directory and therefore execute after a successful SSH login. The only problem is that we can’t trigger this condition manually (we don’t have valid credentials) and it doesn’t seem like there’s a background job present on the box that will do it for us. </p>
+<p>Also, we need valid credentials to access the admin tool on port 4555 to trigger all of this anyway. The source code for the exploit we used was using the credentials <code>root:root</code> to access the tool. We can confirm these are atucally the ones in use here with Telnet :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/090d70791938c4183b3cd94b8c0baf2e96f6de9e/uploads/2025-12-31T18-40-39-639Z-b8x4sec2x.jpg" /></p>
+<p>Now that we have access to the remote administration tool, we can do a lot of interesting things, for example changing a user's password! This is interesting because POP3 is running. POP3 offers a mail receiving method where the client downloads his mail to his local machine for offline access. If we can change an existing user’s password and login into his account, we could potentially read his emails!</p>
+<p>Let’s start by listing the existing users :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e94adaff72f49f47a8680c5ff70ec99f35bb348c/uploads/2025-12-31T18-40-54-723Z-cpwj0hylt.jpg" /></p>
+<p>We can change the first user’s password to “test” :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/89d1f663529e366c22bfc97f1d7e3abaff1709e0/uploads/2025-12-31T18-41-46-329Z-ylavjqsg7.jpg" /></p>
+<p>Then we can login into as his user in POP3 (again we can use Telnet for this) and check his mail :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e2844c8f6db894b2ce711b65969861ec0859dbea/uploads/2025-12-31T18-48-39-542Z-lgk76ndor.jpg" /></p>
+<p>It’s unfortunately empty. We can repeat the same process for the other users until we land on <code>mindy</code>, who has 2 emails. Here’s the first :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/3a175e062966295674d5b9a5bffdabc2f92eb651/uploads/2025-12-31T18-48-56-678Z-9j2kz8axr.jpg" /></p>
+<p>And here’s the second :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ac786640f22514ec6d544338892bb370d8a07a25/uploads/2025-12-31T18-49-12-262Z-iamisurmg.jpg" /></p>
+<p>Nice, SSH credentials! We can use those to login right away, but I wanted to try something first. Remember the first exploit we talked about? We could trigger it by logging in as <code>mindy</code> into SSH. I’ll run the exploit, set up a listener and login :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/ab389e06f4586d17f3ee6aad5c3dd0b8905e1604/uploads/2025-12-31T18-49-31-377Z-xmbhe6uyl.jpg" /></p>
+<p><img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/d869022605172a7842d419eddbe0cd79df1f703d/uploads/2025-12-31T18-49-57-609Z-rfg9isvn5.jpg" /></p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>Funny enough, getting a shell this way ended up benefiting us. With a normal SSH login, our user is assigned the <code>/bin/rbash</code> restricted shell. This meant I couldn’t change directories, was limited to the commands I wanted to run and couldn’t use forward slashes inside my commands. These restrictions don’t seem to apply here because of the shell used in the reverse shell (there was another way of getting around this which I'll show at the end).</p>
+<p>The usual enumeration doesn’t really reveal anything except a python script inside <code>/opt</code> that cleared out the <code>/tmp</code> directory. Using a tool like <code>pspy</code> to check background and running processes, we can see that a process with the UID of 0 (root) executes that file every few minutes :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2756a2e78f550be38b2c336741335ddb5c89e7f5/uploads/2025-12-31T18-50-23-832Z-qd8s1zi5h.jpg" /></p>
+<p>We actually have writing permissions on this file. If we add our own python code into it, it would be executed as root along with the rest of the file. We can use the os module to execute a command and add the SUID bit to <code>/bin/bash</code>, making every user able to execute it as the owner (root) :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/9250c27e2d11ca4a3b9c7ca6abba96d406869453/uploads/2025-12-31T18-50-42-325Z-tgrf9zv0j.jpg" /></p>
+<p>Now we can spawn a shell as root after a few minutes of waiting for the script to execute :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2864b2dbec2b211fe0a4e22a1097825ecbfe632b/uploads/2025-12-31T18-50-57-036Z-6qeodzyb2.jpg" /></p>
+<p>The first part demonstrates that by spawning another shell with <code>sh</code>, we escape the restricted shell imposed upon our user, allowing us to execute <code>/bin/bash</code> as a command. The exploit we found wasn’t entirely necessary, but it was still really fun to look at!</p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>

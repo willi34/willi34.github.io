@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF writeups</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/posts.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header will be loaded here -->
+    <div id="header-placeholder"></div>
+    <div class="main-content">
+        <div class="container">
+<h4 id="box-details">Box details</h4>
+<table>
+<thead>
+<tr>
+<th><strong>Type</strong></th>
+<th>Linux</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Rating</strong></td>
+<td>4.5</td>
+</tr>
+<tr>
+<td><strong>Solves</strong></td>
+<td>~5.5k</td>
+</tr>
+<tr>
+<td><strong>Author</strong></td>
+<td><code>ch4p</code></td>
+</tr>
+<tr>
+<td><strong>Original Solver</strong></td>
+<td><code>willi34</code></td>
+</tr>
+<tr>
+<td><strong>Difficulty</strong></td>
+<td>4/10</td>
+</tr>
+</tbody>
+</table>
+<p>Finding a picture with a known plugin vulnerability for WordPress that contains a hidden encrypted SSH key and abusing sudo privileges.</p>
+<h4 id="discovery">Discovery</h4>
+<p>Nmap scan to discover open ports :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/40a1948e6a9fac1e41630aaa6d13cf96050300b5/uploads/2025-12-29T20-31-24-867Z-ziqyhafhf.jpg" /></p>
+<h4 id="web-server">Web server</h4>
+<p>This site is clearly built using WordPress, a content management system (CMS) that specializes in building blog-like applications :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/bd48834d2ef8594519fbf999ea97fd56bd3f5ced/uploads/2025-12-29T20-31-43-702Z-uwu0s25bj.jpg" /></p>
+<p>We can use a tool like <em>wpscan</em> to enumerate a bunch of its features like existing users, plugins, themes and more. The syntax is pretty simple : <code>wpscan –url &lt;URL&gt; &lt;options&gt;</code></p>
+<p>Here are the results of a basic scan : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/c319fe3f73e6530e57ae19e1ab3725311d4fb203/uploads/2025-12-29T20-32-03-657Z-14huf3dl5.jpg" /></p>
+<p>We can see the WordPress version of <code>4.7.3</code>. Searching for known vulnerabilities reveals this super interesting one <a href="https://wpscan.com/vulnerability/b3f2f3db-75e4-4d48-ae5e-d4ff172bc093/">here</a>, where a malicious attacker can trigger a password reset and possibly get access to the recovery link by changing the <code>Host</code> header of the request to his own domain. Unfortunately, it’s not really feasible for us to exploit in this scenario.</p>
+<p>To further enumerate with <code>wpscan</code>, we can use the <code>-e</code> option :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/bb26ed6d804e91047e4ad20c67a949a2d39fecbd/uploads/2025-12-29T20-35-47-593Z-6lpsgsnmu.jpg" /></p>
+<p>We found a user, but we can also see an existing plugin with its version :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/2f158df9effb03a60489f8f2f5f2f0f0c0e686ce/uploads/2025-12-29T20-36-04-866Z-ph1gzisho.jpg" /></p>
+<p>The <code>job-manager</code> plugin allows for the efficient creation of job listings with forms. By clicking on the job listings on the main page, we can see an example one of such form for a penetration testing job :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/3a3d86eecd51425c0fceaba92422e97ac082fbeb/uploads/2025-12-29T20-36-50-096Z-2of01id42.jpg" /></p>
+<p>Searching for vulnerabilities in job-manager version <code>0.7.25</code> reveals two main vectors :</p>
+<p><a href="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2015-6668/">CVE-2015-6668</a> : Brute-forcing the upload directory structure to find CV files with a specific name</p>
+<p><a href="https://www.exploit-db.com/exploits/37738">CVE-2015-2321</a> : XSS in the email field of the form allowing users to steal cookies</p>
+<p>The first one doesn’t seem very interesting since we don’t really have a file name to look for. Even if we did, what could we find? The odds of this being useful to us is very low, so I discarded it from my thoughts and moved on to the next one (big mistake!). </p>
+<p>The XSS vulnerability seemed interesting because the creator of the box specifically created a listing. However, with every XSS payload I tried in the email field I would get either nothing or a 500 internal server error. At this point I was lost. I was pretty sure I had enumerated everything and the known vulnerabilities weren’t that interesting or didn’t work.</p>
+<h4 id="initial-vector">Initial vector</h4>
+<p>After a lot more searching, I found this GitHub page <a href="https://github.com/N3rdyN3xus/CVE-2015-6668">here</a> and noticed something weird. Notice what URL the creator of the script is using for his proof of concept. It’s the same IP address (10.10.10.10) as the one we have for our HTB target box! In his example, he searches for a file called <code>HackerAccessGranted</code>. I thought I might as well do the same, and we get the same result :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/97686a5a7afbe5fbe48678de114ab74bcc6b35e1/uploads/2025-12-29T20-43-36-047Z-2soap91ws.jpg" /></p>
+<p>I’m not sure if this is considered a spoiler or if people were supposed to find the file this way, since there’s no way in hell I was ever gonna come close to guess that (unless I missed something somewhere like a comment in the source code or something). Although I was still confused, since this is just an image. </p>
+<p>There’s a small chance there’s hidden data within this image we can extract though. I tried running a tool called <code>exfitool</code> on it to extract its metadata, but got nothing interesting. Next I tried <code>steghide</code>, a common steganography tool. To my surprise, there actually was a file embeded inside the image :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/bf076aadbd3ca4b1fc05374c377a846bb233352c/uploads/2025-12-29T20-43-58-246Z-tkdq78nvd.jpg" /></p>
+<p>Weird, HackTheBox machines are usually a bit more realistic than this. We found a user called <code>takis</code> earlier, so this is probably his private SSH key.</p>
+<p>We can’t use this right away though, since it’s been encrypted with a passphrase : 
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/e906cfc0b1d76f7f2470c6cb8edb142f55e5aa6d/uploads/2025-12-29T20-44-46-820Z-sa33de31f.jpg" /></p>
+<p>We can use a script called <code>ssh2john</code> to transform the key into a format <code>John The Ripper</code> can use to attempt to brute-force this passphrase :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/66c2d7251fc697997e67600f361c873dbd317cb1/uploads/2025-12-29T20-45-28-701Z-u7o51fnuk.jpg" /></p>
+<p>Using this password when prompted for the SSH key passphrase works and we are logged in as <code>takis</code>.</p>
+<h4 id="privilege-escalation">Privilege escalation</h4>
+<p>This privilege escalation is very straightforward :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/78551830470ac6b6df7d0dd397d7a7df1fe39278/uploads/2025-12-29T20-46-16-498Z-904g977sy.jpg" /></p>
+<p>We can’t run everything as all users since it requires the password for the <code>takis</code> user, which we don’t have. Instead, we can run a weird script with no password :
+<img alt="" src="https://raw.githubusercontent.com/free-whiteboard-online/Free-Erasorio-Alternative-for-Collaborative-Design/88099372c37e63575802a65b8e2312c71cff40f6/uploads/2025-12-29T20-46-50-824Z-h5y6gj60u.jpg" /></p>
+<p>The script just executes the first 4 arguments we give it. Since we are running the script as root with <code>sudo</code>, we can simply spawn a shell as root.</p>
+    <!-- Footer will be loaded here -->
+        </div>
+    </div>
+    <div id="footer-placeholder"></div>
+    <script src="/js/script.js"></script>
+</body>
+</html>
